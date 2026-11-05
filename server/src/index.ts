@@ -4,9 +4,12 @@ import { migrate, pool } from './db.js';
 import {
   autocompleteAddress,
   createRateLimiter,
+  createTileCache,
+  fetchTile,
   findPlaces,
   GeoError,
   isPlaceCategory,
+  parseTileAddress,
   planRoute,
   type RoutePoint,
 } from './geo.js';
@@ -235,6 +238,10 @@ app.post('/api/trips/:id/expenses', wrap(async (req, res) => {
 const addressSearchLimited = createRateLimiter(60, 60_000);
 const placesLimited = createRateLimiter(30, 60_000);
 const routeLimited = createRateLimiter(20, 60_000);
+// One screen of map is about 15 tiles, and tiles this server has saved do not count.
+const tilesLimited = createRateLimiter(600, 60_000);
+const TILE_MAX_AGE_SECONDS = 7 * 24 * 60 * 60;
+const tileCache = createTileCache(64 * 1024 * 1024, TILE_MAX_AGE_SECONDS * 1000);
 
 const GEO_NOT_SET_UP = 'Maps are not set up. Add GEOAPIFY_API_KEY to server/.env and restart the server.';
 
@@ -333,6 +340,43 @@ app.post('/api/geo/route', wrap(async (req, res) => {
   } catch (error) {
     console.error('Route failed:', error instanceof GeoError ? error.message : 'unexpected error');
     res.status(502).json({ error: 'Routing is unavailable right now.' });
+  }
+}));
+
+app.get('/api/geo/tile/:style/:z/:x/:y', wrap(async (req, res) => {
+  const tile = parseTileAddress(req.params.style, req.params.z, req.params.x, req.params.y);
+  if (!tile) {
+    res.status(400).json({ error: 'That is not a valid map tile' });
+    return;
+  }
+
+  const sendTile = (bytes: Buffer) => {
+    res.set('Cache-Control', `public, max-age=${TILE_MAX_AGE_SECONDS}`).type('png').send(bytes);
+  };
+  const key = `${tile.style}/${tile.z}/${tile.x}/${tile.y}`;
+
+  // Saved tiles cost no credits, so they need neither the key nor the limit.
+  const saved = tileCache.get(key);
+  if (saved) {
+    sendTile(saved);
+    return;
+  }
+
+  const apiKey = process.env.GEOAPIFY_API_KEY?.trim();
+  if (!apiKey) {
+    res.status(503).json({ error: GEO_NOT_SET_UP });
+    return;
+  }
+  if (!tileCache.isPending(key) && tilesLimited(req.ip ?? 'unknown')) {
+    res.status(429).json({ error: 'Too many map tiles. Try again in a minute.' });
+    return;
+  }
+
+  try {
+    sendTile(await tileCache.load(key, () => fetchTile(tile, apiKey)));
+  } catch (error) {
+    console.error('Map tile failed:', error instanceof GeoError ? error.message : 'unexpected error');
+    res.status(502).json({ error: 'The map is unavailable right now.' });
   }
 }));
 

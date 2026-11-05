@@ -4,6 +4,7 @@ import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { C, layout } from '../theme';
 import type { Trip } from '../types';
 import { BottomSheet } from '../components/BottomSheet';
+import { StopCard } from '../components/StopCard';
 import { TripMap } from '../components/TripMap';
 import { drivingStops, duration, miles, routedStops, schedule, shortLabel } from '../route';
 import { legAt, OFF_ROUTE_METERS, progressAlong } from '../progress';
@@ -27,6 +28,7 @@ export function DriveScreen({
   onConnection: () => void;
 }) {
   const [height, setHeight] = useState(0);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
   const drivers = currentDrivers(trip);
   const ready = hasEndpoints(trip);
   const stops = routedStops(trip);
@@ -89,12 +91,15 @@ export function DriveScreen({
   // The driver on the stretch the car is on now, or the first driver before the trip starts.
   const turn = driverLegs.length > 0 ? (onRoute && along ? driverAt(driverLegs, along.alongMeters) : driverLegs[0]) : undefined;
   const driver = trip.crew.find((member) => member.id === turn?.crewId) ?? drivers[0]?.member ?? trip.crew[0];
+  const selected = fullMap ? undefined : stops.find((stop) => stop.id === selectedId);
+  const selectedLeg = selected ? timings?.get(selected.id)?.legMeters : null;
 
   return (
     <View style={layout.fill} onLayout={(event) => setHeight(event.nativeEvent.layout.height)}>
       <View style={[styles.mapWrap, fullMap && layout.fill]}>
         <TripMap
           stops={stops.map((stop) => ({
+            id: stop.id,
             latitude: stop.latitude,
             longitude: stop.longitude,
             color: stop.pin,
@@ -103,6 +108,9 @@ export function DriveScreen({
           path={plan?.path}
           me={position}
           sections={sections}
+          routeColor={drivers.length > 0 ? driver?.color : undefined}
+          selectedId={selected?.id ?? null}
+          onSelect={setSelectedId}
         />
         <View style={styles.driverPill}>
           <View style={[styles.mini, { backgroundColor: driver?.color ?? C.teal }]} />
@@ -123,7 +131,15 @@ export function DriveScreen({
             </Text>
           </View>
         ) : null}
-        {!fullMap ? (
+        {selected ? (
+          <StopCard
+            stop={selected}
+            time={timings?.get(selected.id)?.time ?? selected.time}
+            fromLast={selectedLeg ? `${miles(selectedLeg)} from the last stop` : null}
+            onClose={() => setSelectedId(null)}
+          />
+        ) : null}
+        {!fullMap && !selected ? (
           <View style={styles.routing}>
             <Text style={styles.routingTitle}>Routing {trip.routeName}</Text>
             <Text style={styles.routingLeg}>{legLine}</Text>
@@ -242,7 +258,7 @@ const styles = StyleSheet.create({
     position: 'absolute',
     left: 16,
     right: 16,
-    bottom: 28,
+    bottom: 36,
     backgroundColor: '#1B3129',
     borderRadius: 16,
     paddingHorizontal: 14,

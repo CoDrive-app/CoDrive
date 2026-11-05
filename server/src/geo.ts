@@ -6,6 +6,7 @@
 const AUTOCOMPLETE_URL = 'https://api.geoapify.com/v1/geocode/autocomplete';
 const ROUTING_URL = 'https://api.geoapify.com/v1/routing';
 const PLACES_URL = 'https://api.geoapify.com/v2/places';
+const TILES_URL = 'https://maps.geoapify.com/v1/tile';
 
 /** What the app can ask for nearby, mapped to Geoapify place categories. */
 export const PLACE_CATEGORIES = {
@@ -91,7 +92,8 @@ export type RoutePlan = {
   path: [number, number][];
 };
 
-const MAX_PATH_POINTS = 400;
+// Enough points for the line to follow the roads when the map is zoomed in to street level.
+const MAX_PATH_POINTS = 3000;
 
 /** Driving route through the points in order. */
 export async function planRoute(
@@ -196,6 +198,101 @@ function finite(value: unknown): number | null {
     return Number.isFinite(parsed) ? parsed : null;
   }
   return null;
+}
+
+/** The map styles the app may ask for. Each is a Geoapify style name. */
+const TILE_STYLES = new Set(['osm-bright']);
+const MAX_TILE_ZOOM = 20;
+
+export type TileAddress = { style: string; z: number; x: number; y: number };
+
+/** Checks a tile address from a request. Returns null unless it names a real tile in an allowed style. */
+export function parseTileAddress(style: string, z: string, x: string, y: string): TileAddress | null {
+  if (!TILE_STYLES.has(style) || ![z, x, y].every((part) => /^\d{1,7}$/.test(part))) return null;
+  const zoom = Number(z);
+  const column = Number(x);
+  const row = Number(y);
+  if (zoom > MAX_TILE_ZOOM) return null;
+  const count = 2 ** zoom;
+  if (column >= count || row >= count) return null;
+  return { style, z: zoom, x: column, y: row };
+}
+
+/** One high-resolution map tile as PNG bytes. Error messages never include the URL, because the URL contains the key. */
+export async function fetchTile(tile: TileAddress, apiKey: string, options: { endpoint?: string } = {}): Promise<Buffer> {
+  const url = new URL(`${options.endpoint ?? TILES_URL}/${tile.style}/${tile.z}/${tile.x}/${tile.y}@2x.png`);
+  url.searchParams.set('apiKey', apiKey);
+
+  let response: Response;
+  try {
+    response = await fetch(url, { signal: AbortSignal.timeout(8000) });
+  } catch {
+    throw new GeoError('Could not reach Geoapify (network error or timeout)');
+  }
+  if (!response.ok) {
+    throw new GeoError(`Geoapify answered with status ${response.status}`);
+  }
+  try {
+    return Buffer.from(await response.arrayBuffer());
+  } catch {
+    throw new GeoError('Could not read the tile from Geoapify');
+  }
+}
+
+/**
+ * Keeps recently used tiles in memory so that looking at the same area again costs no Geoapify credits.
+ * The least recently used tiles are dropped first. Two callers asking for one tile share one request.
+ */
+export function createTileCache(maxBytes: number, maxAgeMs: number) {
+  const tiles = new Map<string, { bytes: Buffer; savedAt: number }>();
+  const pending = new Map<string, Promise<Buffer>>();
+  let total = 0;
+
+  const remove = (key: string) => {
+    const entry = tiles.get(key);
+    if (!entry) return;
+    total -= entry.bytes.length;
+    tiles.delete(key);
+  };
+
+  return {
+    /** The saved tile, if there is a fresh one. */
+    get(key: string): Buffer | null {
+      const entry = tiles.get(key);
+      if (!entry) return null;
+      remove(key);
+      if (Date.now() - entry.savedAt >= maxAgeMs) return null;
+      // Going back in at the end marks it as just used.
+      tiles.set(key, entry);
+      total += entry.bytes.length;
+      return entry.bytes;
+    },
+    /** Whether this tile is already on its way, so asking again would not cost another request. */
+    isPending(key: string): boolean {
+      return pending.has(key);
+    },
+    /** Runs the fetch unless the same tile is already on its way, and saves the result. Failures are not saved. */
+    load(key: string, fetchBytes: () => Promise<Buffer>): Promise<Buffer> {
+      const running = pending.get(key);
+      if (running) return running;
+      const request = fetchBytes()
+        .then((bytes) => {
+          remove(key);
+          if (bytes.length <= maxBytes) {
+            tiles.set(key, { bytes, savedAt: Date.now() });
+            total += bytes.length;
+            for (const oldest of tiles.keys()) {
+              if (total <= maxBytes) break;
+              remove(oldest);
+            }
+          }
+          return bytes;
+        })
+        .finally(() => pending.delete(key));
+      pending.set(key, request);
+      return request;
+    },
+  };
 }
 
 /** A small in-memory limit per caller, so a runaway client can't burn through the Geoapify quota. */

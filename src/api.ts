@@ -92,6 +92,11 @@ export function fetchRoute(points: { latitude: number; longitude: number }[]) {
   });
 }
 
+/** The address of one map tile on the CoDrive API, which holds the Geoapify key. */
+export function tileUrl(z: number, x: number, y: number) {
+  return `${apiBaseUrl()}/api/geo/tile/osm-bright/${z}/${x}/${y}`;
+}
+
 export function listTrips() {
   return request<ApiTrip[]>('/api/trips');
 }
