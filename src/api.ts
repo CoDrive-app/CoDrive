@@ -44,11 +44,17 @@ export type ApiExpense = {
   paid_by_user: string;
   amount: number;
   category: string;
+  title: string;
   description: string;
+  photos: string[];
 };
 
 export function listTrips() {
   return request<ApiTrip[]>('/api/trips');
+}
+
+export function getTrip(id: string) {
+  return request<ApiTrip & { waypoints: ApiWaypoint[]; expenses: ApiExpense[] }>(`/api/trips/${id}`);
 }
 
 export function createTrip(title: string, budget: number) {
@@ -70,7 +76,14 @@ export function addWaypoint(
 
 export function logExpense(
   tripId: string,
-  expense: { paid_by_user: string; amount: number; category: string; description: string },
+  expense: {
+    paid_by_user: string;
+    amount: number;
+    category: string;
+    title: string;
+    description: string;
+    photos: string[];
+  },
 ) {
   return request<ApiExpense>(`/api/trips/${tripId}/expenses`, {
     method: 'POST',

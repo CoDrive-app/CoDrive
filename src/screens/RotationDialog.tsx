@@ -12,12 +12,14 @@ export function RotationDialog({
   onClose,
   onAcknowledge,
   onRemind,
+  onSwap,
 }: {
   driverLine: string;
   rest: RestStop;
   onClose: () => void;
   onAcknowledge: () => void;
   onRemind: () => void;
+  onSwap: () => void;
 }) {
   return (
     <Dialog onClose={onClose}>
@@ -35,6 +37,7 @@ export function RotationDialog({
       <InfoCard kicker="NEXT REST STOP" title={rest.place} note={rest.note} trailing={rest.distance} />
       <View style={dialogStyles.actions}>
         <PrimaryButton label="Acknowledge Rotation" onPress={onAcknowledge} />
+        <QuietButton label="Swap drivers" onPress={onSwap} />
         <QuietButton label="Remind Me in 10 Min" onPress={onRemind} />
       </View>
     </Dialog>

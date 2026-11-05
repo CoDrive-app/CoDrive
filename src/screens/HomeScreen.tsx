@@ -15,6 +15,8 @@ export function HomeScreen({
   onDelete,
   onEdit,
   onProfile,
+  onStart,
+  onCrew,
 }: {
   trips: Trip[];
   profileUri: string | null;
@@ -23,6 +25,8 @@ export function HomeScreen({
   onDelete: (id: string) => void;
   onEdit: (id: string) => void;
   onProfile: () => void;
+  onStart: (id: string) => void;
+  onCrew: (id: string) => void;
 }) {
   return (
     <ScrollView style={layout.fill} contentContainerStyle={layout.scroll} showsVerticalScrollIndicator={false}>
@@ -51,32 +55,56 @@ export function HomeScreen({
       {trips.length === 0 ? <Text style={styles.empty}>No expeditions yet.</Text> : null}
       {trips.map((trip) => (
         <View key={trip.id} style={styles.expedition}>
-          <TouchableOpacity style={styles.expeditionMain} onPress={() => onOpen(trip.id)} activeOpacity={0.86}>
-            <Image source={{ uri: trip.image }} style={styles.thumb} />
-            <View style={styles.copy}>
-              <Text style={styles.title} numberOfLines={1}>
-                {trip.title}
-              </Text>
-              <Text style={styles.date}>{trip.dates}</Text>
-            </View>
-            <AvatarStack people={trip.crew} size={26} />
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={styles.iconButton}
-            onPress={() => onEdit(trip.id)}
-            activeOpacity={0.7}
-            accessibilityLabel={`Edit ${trip.title}`}
-          >
-            <Ionicons name="pencil" size={15} color={C.muted} />
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={styles.iconButton}
-            onPress={() => onDelete(trip.id)}
-            activeOpacity={0.7}
-            accessibilityLabel={`Delete ${trip.title}`}
-          >
-            <Ionicons name="close" size={16} color={C.muted} />
-          </TouchableOpacity>
+          <View style={styles.expeditionRow}>
+            <TouchableOpacity style={styles.expeditionMain} onPress={() => onOpen(trip.id)} activeOpacity={0.86}>
+              <Image source={{ uri: trip.image }} style={styles.thumb} />
+              <View style={styles.copy}>
+                <Text style={styles.title} numberOfLines={1}>
+                  {trip.title}
+                </Text>
+                <Text style={styles.date}>{trip.dates}</Text>
+                {trip.status === 'live' ? <Text style={styles.live}>On the road</Text> : null}
+              </View>
+              <AvatarStack people={trip.crew} size={26} />
+            </TouchableOpacity>
+            {trip.createdBy === 'you' ? (
+              <TouchableOpacity
+                style={styles.iconButton}
+                onPress={() => onCrew(trip.id)}
+                activeOpacity={0.7}
+                accessibilityLabel={`Manage crew for ${trip.title}`}
+              >
+                <Ionicons name="people-outline" size={16} color={C.muted} />
+              </TouchableOpacity>
+            ) : null}
+            <TouchableOpacity
+              style={styles.iconButton}
+              onPress={() => onEdit(trip.id)}
+              activeOpacity={0.7}
+              accessibilityLabel={`Edit ${trip.title}`}
+            >
+              <Ionicons name="pencil" size={15} color={C.muted} />
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.iconButton}
+              onPress={() => onDelete(trip.id)}
+              activeOpacity={0.7}
+              accessibilityLabel={`Delete ${trip.title}`}
+            >
+              <Ionicons name="close" size={16} color={C.muted} />
+            </TouchableOpacity>
+          </View>
+          {trip.status === 'planning' ? (
+            <TouchableOpacity
+              style={styles.launch}
+              onPress={() => onStart(trip.id)}
+              activeOpacity={0.85}
+              accessibilityLabel={`Start ${trip.title}`}
+            >
+              <Ionicons name="navigate" size={16} color={C.white} />
+              <Text style={styles.launchText}>Start journey</Text>
+            </TouchableOpacity>
+          ) : null}
         </View>
       ))}
     </ScrollView>
@@ -116,15 +144,41 @@ const styles = StyleSheet.create({
     maxWidth: 340,
   },
   expedition: {
-    flexDirection: 'row',
-    alignItems: 'center',
     backgroundColor: C.white,
     borderRadius: 18,
     paddingLeft: 12,
-    paddingVertical: 12,
+    paddingTop: 12,
     paddingRight: 8,
+    paddingBottom: 12,
     marginBottom: 12,
     ...cardShadow,
+  },
+  expeditionRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  launch: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    marginTop: 10,
+    marginRight: 4,
+    marginLeft: 0,
+    backgroundColor: C.teal,
+    borderRadius: 12,
+    minHeight: 40,
+  },
+  launchText: {
+    color: C.white,
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  live: {
+    marginTop: 4,
+    fontSize: 12,
+    fontWeight: '700',
+    color: C.teal,
   },
   expeditionMain: {
     flex: 1,

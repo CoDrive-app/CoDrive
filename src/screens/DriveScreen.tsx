@@ -2,6 +2,8 @@ import { ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-nati
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { C, layout } from '../theme';
 import type { Trip } from '../types';
+import { currentDriver, isRouteEnd } from '../journey';
+import { PrimaryButton } from '../components/Buttons';
 import { TripMap } from '../components/TripMap';
 
 export function DriveScreen({
@@ -9,20 +11,42 @@ export function DriveScreen({
   fullMap,
   note,
   onRotation,
+  onSwap,
+  onToggleGoing,
   onConnection,
+  onStart,
 }: {
   trip: Trip;
   fullMap: boolean;
   note: string | null;
   onRotation: () => void;
+  onSwap: () => void;
+  onToggleGoing: (id: string) => void;
   onConnection: () => void;
+  onStart: () => void;
 }) {
-  const driver = trip.crew[0];
+  const driver = currentDriver(trip);
+
+  if (trip.status !== 'live') {
+    return (
+      <View style={styles.gate}>
+        <Text style={styles.gateTitle}>This journey hasn’t started</Text>
+        <Text style={styles.gateBody}>
+          Check the route, crew, dates, and budget. Launch from here once everything looks good.
+        </Text>
+        <PrimaryButton
+          label="Review and start"
+          onPress={onStart}
+          icon={<MaterialCommunityIcons name="flag-checkered" size={18} color={C.white} />}
+        />
+      </View>
+    );
+  }
 
   return (
     <View style={layout.fill}>
       <View style={[styles.mapWrap, fullMap && layout.fill]}>
-        <TripMap />
+        <TripMap stops={trip.waypoints} />
         <View style={styles.driverPill}>
           <View style={[styles.mini, { backgroundColor: driver?.color ?? C.teal }]} />
           <Text style={styles.driverText}>{driver?.name ?? 'Crew'} driving</Text>
@@ -31,8 +55,11 @@ export function DriveScreen({
           <TouchableOpacity style={styles.tool} onPress={onConnection} activeOpacity={0.85}>
             <MaterialCommunityIcons name="bluetooth" size={18} color={C.teal} />
           </TouchableOpacity>
-          <TouchableOpacity style={[styles.tool, styles.toolSun]} onPress={onRotation} activeOpacity={0.85}>
+          <TouchableOpacity style={[styles.tool, styles.toolSun]} onPress={onSwap} activeOpacity={0.85} accessibilityLabel="Swap drivers">
             <MaterialCommunityIcons name="steering" size={18} color={C.orange} />
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.tool} onPress={onRotation} activeOpacity={0.85} accessibilityLabel="Driver rotation reminder">
+            <MaterialCommunityIcons name="timer-outline" size={18} color={C.teal} />
           </TouchableOpacity>
         </View>
         {note ? (
@@ -62,12 +89,17 @@ export function DriveScreen({
             {trip.waypoints.map((stop, index) => (
               <View key={stop.id} style={styles.row}>
                 <View style={styles.rail}>
-                  <View style={[styles.dot, { backgroundColor: stop.pin }]} />
+                  <View style={[styles.dot, { backgroundColor: stop.going ? stop.pin : '#E4DFD6' }]} />
                   {index < trip.waypoints.length - 1 ? <View style={styles.line} /> : null}
                 </View>
                 <View style={styles.copy}>
-                  <Text style={styles.stopTitle}>{stop.title}</Text>
-                  <Text style={styles.stopMeta}>{stop.stop}</Text>
+                  <Text style={[styles.stopTitle, !stop.going && styles.stopSkipped]}>{stop.title}</Text>
+                  <Text style={styles.stopMeta}>{stop.going ? stop.stop : 'Passing by'}</Text>
+                  {isRouteEnd(stop) ? null : (
+                    <TouchableOpacity onPress={() => onToggleGoing(stop.id)} activeOpacity={0.75}>
+                      <Text style={styles.toggle}>{stop.going ? 'Skip this stop' : 'Stop here'}</Text>
+                    </TouchableOpacity>
+                  )}
                 </View>
                 <Text style={styles.time}>{stop.time}</Text>
               </View>
@@ -84,6 +116,25 @@ export function DriveScreen({
 }
 
 const styles = StyleSheet.create({
+  gate: {
+    flex: 1,
+    justifyContent: 'center',
+    paddingHorizontal: 28,
+    gap: 12,
+  },
+  gateTitle: {
+    fontSize: 26,
+    lineHeight: 32,
+    fontWeight: '700',
+    color: C.ink,
+    letterSpacing: -0.4,
+  },
+  gateBody: {
+    fontSize: 15,
+    lineHeight: 22,
+    color: C.muted,
+    marginBottom: 8,
+  },
   mapWrap: {
     flex: 1.05,
     backgroundColor: C.map,
@@ -241,6 +292,15 @@ const styles = StyleSheet.create({
     marginTop: 2,
     fontSize: 12,
     color: C.muted,
+  },
+  stopSkipped: {
+    color: C.muted,
+  },
+  toggle: {
+    marginTop: 4,
+    fontSize: 12,
+    fontWeight: '700',
+    color: C.teal,
   },
   time: {
     fontSize: 13,

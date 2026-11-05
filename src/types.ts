@@ -19,6 +19,9 @@ export interface Waypoint {
   time: string;
   stop: string;
   pin: string;
+  x: number;
+  y: number;
+  going: boolean;
 }
 
 export interface Expense {
@@ -27,6 +30,7 @@ export interface Expense {
   details: string;
   amount: number;
   icon: ExpenseIcon;
+  photos?: string[];
 }
 
 export interface RestStop {
@@ -34,6 +38,8 @@ export interface RestStop {
   distance: string;
   note: string;
 }
+
+export type JourneyStatus = 'planning' | 'live';
 
 export interface Trip {
   id: string;
@@ -43,6 +49,7 @@ export interface Trip {
   dates: string;
   image: string;
   crew: Crew[];
+  driverId: string;
   waypoints: Waypoint[];
   expenses: Expense[];
   budget: number;
@@ -50,4 +57,6 @@ export interface Trip {
   leg: string;
   progress: number;
   rest: RestStop;
+  status: JourneyStatus;
+  createdBy: string;
 }

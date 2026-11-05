@@ -16,10 +16,10 @@ npm start
 
 ## What you can do
 
-- **Home.** Start a trip with a name, start, end, dates, a budget, and an optional picture. The budget is what Split uses for that trip. Open an expedition, tap the pencil to edit it, or tap the X to delete it. The profile picture starts as an anonymous icon; tap it to choose a photo or switch back.
+- **Home.** Start a trip with a name, start, end, dates, a budget, and an optional picture. The budget is what Split uses for that trip. Open an expedition, tap the pencil to edit it, or tap the X to delete it. Trips still in planning show **Start journey**, which checks the route, crew, dates, and budget before the drive goes live. The people icon opens a crew popup when you created the trip. The profile picture starts as an anonymous icon; tap it to choose a photo or switch back.
 - **Invite.** After you create a trip, share a link or QR code, then continue to Plan.
-- **Plan.** Review proposed stops, like one, or suggest a new waypoint.
-- **Drive.** Follow the route and today’s itinerary. The first visit opens a driver-rotation reminder. The bluetooth control opens the connection-lost notice.
+- **Plan.** Review proposed stops, like one, or suggest a new waypoint. **Start journey** runs the same pre-launch check. Once the trip is live, **Open the drive** jumps to the route. The people icon manages who is on a trip you created.
+- **Drive.** Follow the route and today’s itinerary after the journey is launched. Opening Drive before that shows the same start check. The first visit on a live trip opens a driver-rotation reminder. The bluetooth control opens the connection-lost notice.
 - **Split.** See the shared budget and log an expense, including notes for who paid and whether it was split.
 
 Sample trips load from `src/data.ts`. Starting a new trip saves it through the API and keeps the returned id and share code for later stops and expenses.

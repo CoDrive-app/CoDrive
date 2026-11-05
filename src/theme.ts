@@ -14,6 +14,8 @@ export const C = {
   rest: '#F1EEE8',
   map: '#D7E6C6',
   field: '#F6F3EE',
+  warn: '#C2410C',
+  warnBg: '#FFF1E8',
 };
 
 export const cardShadow: ViewStyle = {

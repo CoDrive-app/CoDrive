@@ -1,51 +1,174 @@
-import { StyleSheet, View } from 'react-native';
-import Svg, { Circle, Ellipse, G, Path, Rect, Text as SvgText } from 'react-native-svg';
+import { useRef } from 'react';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
+import Svg, { Ellipse, Path, Rect } from 'react-native-svg';
 import { C } from '../theme';
 
-const ROUTE = 'M64 318 Q108 286 132 258 Q168 214 176 184 Q198 146 228 128 Q262 108 286 96';
+export type MapStop = {
+  id: string;
+  title: string;
+  x: number;
+  y: number;
+  pin: string;
+  going: boolean;
+};
 
-const STOPS = [
-  { x: 64, y: 318, color: '#E26D5A', label: 'Pipeline', lx: 16, ly: 284 },
-  { x: 132, y: 258, color: '#E2B045', label: 'Haleiwa', lx: 8, ly: 198 },
-  { x: 176, y: 184, color: '#3AA99A', label: "Shark's", lx: 192, ly: 160 },
-  { x: 228, y: 128, color: '#5B7CFA', label: 'Sunset', lx: 168, ly: 96 },
-  { x: 286, y: 96, color: '#8B6CC4', label: 'Turtle Bay', lx: 196, ly: 62 },
-];
+function routePath(stops: MapStop[]) {
+  const points = stops.filter((stop) => stop.going);
+  if (points.length < 2) return '';
+  let d = `M ${points[0].x} ${points[0].y}`;
+  for (let i = 1; i < points.length; i += 1) {
+    const from = points[i - 1];
+    const to = points[i];
+    const cx = (from.x + to.x) / 2;
+    const cy = (from.y + to.y) / 2 - (to.x - from.x) * 0.12;
+    d += ` Q ${cx} ${cy} ${to.x} ${to.y}`;
+  }
+  return d;
+}
 
-export function TripMap() {
+function shortTitle(title: string) {
+  return title.length > 16 ? `${title.slice(0, 15)}…` : title;
+}
+
+export function TripMap({
+  stops,
+  draft,
+  onPick,
+}: {
+  stops: MapStop[];
+  draft?: { x: number; y: number } | null;
+  onPick?: (x: number, y: number) => void;
+}) {
+  const route = routePath(stops);
+  const size = useRef({ width: 1, height: 1 });
   return (
-    <View style={StyleSheet.absoluteFill}>
-      <Svg width="100%" height="100%" viewBox="0 0 390 420" preserveAspectRatio="xMidYMid slice">
-        <Rect width="390" height="420" fill="#D7E6C6" />
-        <Ellipse cx="30" cy="60" rx="130" ry="80" fill="#EAF3E0" />
-        <Ellipse cx="320" cy="30" rx="150" ry="90" fill="#C5D9B0" />
-        <Ellipse cx="210" cy="210" rx="180" ry="100" fill="#C9DEB6" />
-        <Ellipse cx="70" cy="340" rx="160" ry="90" fill="#E4F0D8" />
-        <Ellipse cx="340" cy="300" rx="130" ry="110" fill="#B7D0A2" />
-        <Ellipse cx="370" cy="16" rx="80" ry="56" fill="#C5DDD4" />
-        <Path d={ROUTE} stroke="#F7FBF3" strokeWidth={16} fill="none" strokeLinecap="round" strokeLinejoin="round" />
-        <Path d={ROUTE} stroke="#E2B045" strokeWidth={8} fill="none" strokeLinecap="round" strokeLinejoin="round" />
-        {STOPS.map((stop) => {
-          const width = stop.label.length * 6.6 + 18;
-          return (
-            <G key={stop.label}>
-              <Rect x={stop.lx} y={stop.ly} width={width} height={20} rx={8} fill="#FFFFFF" />
-              <SvgText
-                x={stop.lx + width / 2}
-                y={stop.ly + 14}
-                fontSize="11"
-                fontWeight="700"
-                textAnchor="middle"
-                fill={C.ink}
-              >
-                {stop.label}
-              </SvgText>
-              <Circle cx={stop.x} cy={stop.y} r={9} fill="#FFFFFF" />
-              <Circle cx={stop.x} cy={stop.y} r={6} fill={stop.color} />
-            </G>
-          );
-        })}
+    <View
+      style={styles.fill}
+      onLayout={(event) => {
+        size.current = {
+          width: event.nativeEvent.layout.width,
+          height: event.nativeEvent.layout.height,
+        };
+      }}
+    >
+      <Svg width="100%" height="100%" viewBox="0 0 100 100" preserveAspectRatio="none" pointerEvents="none">
+        <Rect width="100" height="100" fill="#D7E6C6" />
+        <Ellipse cx="8" cy="14" rx="28" ry="18" fill="#EAF3E0" />
+        <Ellipse cx="82" cy="8" rx="32" ry="20" fill="#C5D9B0" />
+        <Ellipse cx="54" cy="50" rx="40" ry="24" fill="#C9DEB6" />
+        <Ellipse cx="18" cy="82" rx="34" ry="20" fill="#E4F0D8" />
+        <Ellipse cx="86" cy="72" rx="28" ry="24" fill="#B7D0A2" />
+        <Ellipse cx="94" cy="6" rx="16" ry="12" fill="#C5DDD4" />
+        {route ? (
+          <Path d={route} stroke="#F7FBF3" strokeWidth={3.2} fill="none" strokeLinecap="round" strokeLinejoin="round" />
+        ) : null}
+        {route ? (
+          <Path d={route} stroke="#E2B045" strokeWidth={1.6} fill="none" strokeLinecap="round" strokeLinejoin="round" />
+        ) : null}
       </Svg>
+      {stops.map((stop) => (
+        <View
+          key={stop.id}
+          pointerEvents="none"
+          style={[styles.pinWrap, { left: `${stop.x}%`, top: `${stop.y}%` }]}
+        >
+          <View style={[styles.label, !stop.going && styles.labelSkipped]}>
+            <Text style={[styles.labelText, !stop.going && styles.labelTextSkipped]} numberOfLines={1}>
+              {shortTitle(stop.title)}
+            </Text>
+          </View>
+          <View style={[styles.pinOuter, { borderColor: stop.going ? stop.pin : '#C9C3BA' }]}>
+            <View style={[styles.pinInner, { backgroundColor: stop.going ? stop.pin : '#E7E2DA' }]} />
+          </View>
+        </View>
+      ))}
+      {onPick ? (
+        <Pressable
+          style={StyleSheet.absoluteFill}
+          accessibilityLabel="Drop a pin"
+          onPress={(event) => {
+            const { locationX, locationY } = event.nativeEvent;
+            const { width, height } = size.current;
+            onPick(
+              Math.min(96, Math.max(4, (locationX / width) * 100)),
+              Math.min(96, Math.max(4, (locationY / height) * 100)),
+            );
+          }}
+        />
+      ) : null}
+      {draft ? (
+        <View pointerEvents="none" style={[styles.pinWrap, { left: `${draft.x}%`, top: `${draft.y}%` }]}>
+          <View style={styles.draftLabel}>
+            <Text style={styles.draftText}>New stop</Text>
+          </View>
+          <View style={[styles.pinOuter, styles.draftOuter]}>
+            <View style={[styles.pinInner, { backgroundColor: C.teal }]} />
+          </View>
+        </View>
+      ) : null}
     </View>
   );
 }
+
+const styles = StyleSheet.create({
+  fill: {
+    flex: 1,
+    backgroundColor: C.map,
+    overflow: 'hidden',
+  },
+  pinWrap: {
+    position: 'absolute',
+    alignItems: 'center',
+    transform: [{ translateX: -8 }, { translateY: -8 }],
+  },
+  label: {
+    position: 'absolute',
+    bottom: 16,
+    backgroundColor: C.white,
+    borderRadius: 8,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    maxWidth: 120,
+  },
+  labelSkipped: {
+    backgroundColor: 'rgba(255,255,255,0.72)',
+  },
+  labelText: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: C.ink,
+  },
+  labelTextSkipped: {
+    color: C.muted,
+  },
+  pinOuter: {
+    width: 16,
+    height: 16,
+    borderRadius: 8,
+    backgroundColor: C.white,
+    borderWidth: 2,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  pinInner: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+  },
+  draftLabel: {
+    position: 'absolute',
+    bottom: 16,
+    backgroundColor: C.teal,
+    borderRadius: 8,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+  },
+  draftText: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: C.white,
+  },
+  draftOuter: {
+    borderColor: C.teal,
+  },
+});

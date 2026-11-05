@@ -2,11 +2,15 @@ import { useEffect, useState } from 'react';
 import { BackHandler, Platform, StyleSheet, Text, View } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
-import { createTrip, isServerTrip, listTrips, logExpense, type ApiTrip } from './src/api';
+import { createTrip, getTrip, isServerTrip, listTrips, logExpense, type ApiExpense, type ApiTrip } from './src/api';
+import { crewFromName, currentDriver, isRouteEnd, isTripCreator, journeyReady } from './src/journey';
+import { budgetAmount, formatTripDates, parseStoredDates, tidyLabel, tripFormReady } from './src/tripForm';
 import { TabBar } from './src/components/TabBar';
 import { CREW, iconFor, IMG, TRIPS } from './src/data';
 import { ConnectionDialog } from './src/screens/ConnectionDialog';
 import { CostsScreen } from './src/screens/CostsScreen';
+import { CrewDialog } from './src/screens/CrewDialog';
+import { LaunchDialog } from './src/screens/LaunchDialog';
 import { CreateTripDialog } from './src/screens/CreateTripDialog';
 import { DriveScreen } from './src/screens/DriveScreen';
 import { HomeScreen } from './src/screens/HomeScreen';
@@ -15,8 +19,25 @@ import { LogExpenseDialog } from './src/screens/LogExpenseDialog';
 import { PlanScreen } from './src/screens/PlanScreen';
 import { ProfileDialog } from './src/screens/ProfileDialog';
 import { RotationDialog } from './src/screens/RotationDialog';
+import { StopPinDialog } from './src/screens/StopPinDialog';
+import { SwapDriverDialog } from './src/screens/SwapDriverDialog';
 import { C } from './src/theme';
-import type { Crew, Tab, Trip } from './src/types';
+import type { Crew, Expense, ExpenseIcon, Tab, Trip } from './src/types';
+
+const EXPENSE_ICONS: ExpenseIcon[] = ['food', 'snorkel', 'stay', 'treat', 'gas'];
+const STOP_PINS = ['#E26D5A', '#E2B045', '#3AA99A', '#5B7CFA', '#8B6CC4'];
+
+function expenseFromApi(row: ApiExpense): Expense {
+  const icon = EXPENSE_ICONS.find((kind) => kind === row.category) ?? iconFor(row.title || row.category);
+  return {
+    id: row.id,
+    title: row.title || row.category,
+    details: row.description,
+    amount: row.amount,
+    icon,
+    photos: row.photos,
+  };
+}
 
 function tripFromApi(row: ApiTrip): Trip {
   const created = new Date(row.created_at);
@@ -31,9 +52,12 @@ function tripFromApi(row: ApiTrip): Trip {
     dates,
     image: IMG.road,
     crew: [{ id: 'you', name: 'You', initial: 'Y', color: '#E26D5A' }],
+    driverId: 'you',
     waypoints: [],
     expenses: [],
     budget: Number(row.budget) > 0 ? Number(row.budget) : 500,
+    status: 'planning',
+    createdBy: 'you',
     duration: '—',
     leg: row.title,
     progress: 0,
@@ -54,6 +78,11 @@ function CoDrive() {
   const [rotationSeen, setRotationSeen] = useState(false);
   const [rotationNote, setRotationNote] = useState<string | null>(null);
   const [draftStop, setDraftStop] = useState('');
+  const [pinOpen, setPinOpen] = useState(false);
+  const [draftPin, setDraftPin] = useState<{ x: number; y: number } | null>(null);
+  const [swapOpen, setSwapOpen] = useState(false);
+  const [swapChoice, setSwapChoice] = useState<string | null>(null);
+  const [swapReason, setSwapReason] = useState('');
   const [tripName, setTripName] = useState('');
   const [startName, setStartName] = useState('');
   const [endName, setEndName] = useState('');
@@ -65,7 +94,10 @@ function CoDrive() {
   const [expenseName, setExpenseName] = useState('');
   const [expenseAmount, setExpenseAmount] = useState('');
   const [expenseNotes, setExpenseNotes] = useState('');
+  const [expensePhotos, setExpensePhotos] = useState<string[]>([]);
   const [profileOpen, setProfileOpen] = useState(false);
+  const [launchOpen, setLaunchOpen] = useState(false);
+  const [crewOpen, setCrewOpen] = useState(false);
   const [profileUri, setProfileUri] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
@@ -91,8 +123,23 @@ function CoDrive() {
     };
   }, []);
 
+  const tripId = trip?.id;
   useEffect(() => {
-    if (tab === 'drive' && trip && !rotationSeen) {
+    if (tab !== 'costs' || !tripId || !isServerTrip(tripId)) return;
+    let active = true;
+    getTrip(tripId)
+      .then((saved) => {
+        if (!active) return;
+        updateTrip(tripId, (current) => ({ ...current, expenses: saved.expenses.map(expenseFromApi) }));
+      })
+      .catch(() => undefined);
+    return () => {
+      active = false;
+    };
+  }, [tab, tripId]);
+
+  useEffect(() => {
+    if (tab === 'drive' && trip?.status === 'live' && !rotationSeen) {
       setRotationOpen(true);
       setRotationSeen(true);
     }
@@ -125,6 +172,22 @@ function CoDrive() {
         setProfileOpen(false);
         return true;
       }
+      if (launchOpen) {
+        setLaunchOpen(false);
+        return true;
+      }
+      if (crewOpen) {
+        setCrewOpen(false);
+        return true;
+      }
+      if (pinOpen) {
+        setPinOpen(false);
+        return true;
+      }
+      if (swapOpen) {
+        setSwapOpen(false);
+        return true;
+      }
       if (tab !== 'home') {
         setTab('home');
         return true;
@@ -132,7 +195,7 @@ function CoDrive() {
       return false;
     });
     return () => sub.remove();
-  }, [inviteOpen, rotationOpen, connectionOpen, createOpen, expenseOpen, profileOpen, tab]);
+  }, [inviteOpen, rotationOpen, connectionOpen, createOpen, expenseOpen, profileOpen, launchOpen, crewOpen, pinOpen, swapOpen, tab]);
 
   const updateTrip = (id: string, recipe: (current: Trip) => Trip) => {
     setTrips((current) => current.map((item) => (item.id === id ? recipe(item) : item)));
@@ -152,14 +215,15 @@ function CoDrive() {
     }
   };
 
-  const budgetValue = parseFloat(tripBudget);
-  const createReady =
-    tripName.trim().length > 0 &&
-    startDate.trim().length > 0 &&
-    endDate.trim().length > 0 &&
-    !Number.isNaN(budgetValue) &&
-    budgetValue > 0 &&
-    (editingId !== null || (startName.trim().length > 0 && endName.trim().length > 0));
+  const createReady = tripFormReady({
+    editing: editingId !== null,
+    name: tripName,
+    start: startName,
+    end: endName,
+    startDate,
+    endDate,
+    budget: tripBudget,
+  });
   const amountValue = parseFloat(expenseAmount);
   const expenseReady =
     expenseName.trim().length > 0 &&
@@ -187,13 +251,13 @@ function CoDrive() {
   const openEdit = (id: string) => {
     const current = trips.find((item) => item.id === id);
     if (!current) return;
-    const parts = current.dates.split(/\s+–\s+/);
+    const parsedDates = parseStoredDates(current.dates);
     setEditingId(id);
     setTripName(current.title);
     setStartName(current.waypoints.find((stop) => stop.detail === 'Start')?.title ?? '');
     setEndName(current.waypoints.find((stop) => stop.detail === 'Destination')?.title ?? '');
-    setStartDate(parts[0] ?? '');
-    setEndDate(parts.length > 1 ? parts.slice(1).join(' – ') : '');
+    setStartDate(parsedDates.start);
+    setEndDate(parsedDates.end);
     setTripBudget(String(current.budget));
     setTripImage(current.image);
     setCreateOpen(true);
@@ -225,6 +289,9 @@ function CoDrive() {
           time: '9:00 AM',
           stop: 'Departure',
           pin: '#E26D5A',
+          x: 16,
+          y: 78,
+          going: true,
         },
         ...waypoints,
       ];
@@ -243,6 +310,9 @@ function CoDrive() {
           time: '—',
           stop: 'Arrival',
           pin: '#5B7CFA',
+          x: 78,
+          y: 22,
+          going: true,
         },
       ];
     }
@@ -250,13 +320,14 @@ function CoDrive() {
   };
 
   const handleCreate = async () => {
-    if (!createReady || creating) return;
-    const title = tripName.trim();
-    const start = startName.trim();
-    const end = endName.trim();
-    const dates = `${startDate.trim()} – ${endDate.trim()}`;
+    const budget = budgetAmount(tripBudget);
+    if (!createReady || budget === null || creating) return;
+    const title = tidyLabel(tripName);
+    const start = tidyLabel(startName);
+    const end = tidyLabel(endName);
+    const dates = formatTripDates(startDate, endDate);
+    if (!dates) return;
     const image = tripImage ?? IMG.road;
-    const budget = budgetValue;
 
     if (editingId) {
       updateTrip(editingId, (current) => ({
@@ -295,7 +366,10 @@ function CoDrive() {
       dates,
       image,
       crew: [you, CREW[1], CREW[2]],
+      driverId: 'you',
       budget,
+      status: 'planning',
+      createdBy: 'you',
       duration: '—',
       leg: `${start} to ${end}`,
       progress: 0.08,
@@ -313,6 +387,9 @@ function CoDrive() {
           time: '9:00 AM',
           stop: 'Departure',
           pin: '#E26D5A',
+          x: 16,
+          y: 78,
+          going: true,
         },
         {
           id: `${id}-end`,
@@ -325,6 +402,9 @@ function CoDrive() {
           time: '—',
           stop: 'Arrival',
           pin: '#5B7CFA',
+          x: 78,
+          y: 22,
+          going: true,
         },
       ],
     };
@@ -336,30 +416,77 @@ function CoDrive() {
     setInviteOpen(true);
   };
 
-  const addStop = () => {
+  const openStopPin = () => {
+    if (!draftStop.trim() || !trip) return;
+    setDraftPin(null);
+    setPinOpen(true);
+  };
+
+  const confirmStop = () => {
     const title = draftStop.trim();
-    if (!title || !trip) return;
+    if (!title || !trip || !draftPin) return;
+    const point = draftPin;
     const tripId = trip.id;
     const localId = Date.now().toString();
-    updateTrip(tripId, (current) => ({
-      ...current,
-      waypoints: [
-        ...current.waypoints,
-        {
-          id: localId,
-          title,
-          detail: 'Suggested stop',
-          proposedBy: 'You',
-          likes: 1,
-          liked: true,
-          image: IMG.lake,
-          time: '—',
-          stop: 'New suggestion',
-          pin: '#8B6CC4',
-        },
-      ],
-    }));
+    updateTrip(tripId, (current) => {
+      const stop = {
+        id: localId,
+        title,
+        detail: 'Suggested stop',
+        proposedBy: 'You',
+        likes: 1,
+        liked: true,
+        image: IMG.lake,
+        time: '—',
+        stop: 'New suggestion',
+        pin: STOP_PINS[current.waypoints.length % STOP_PINS.length] ?? '#8B6CC4',
+        x: point.x,
+        y: point.y,
+        going: true,
+      };
+      let endIndex = -1;
+      current.waypoints.forEach((item, index) => {
+        if (item.detail === 'Destination' || item.stop === 'Arrival') endIndex = index;
+      });
+      const waypoints = [...current.waypoints];
+      if (endIndex >= 0) waypoints.splice(endIndex, 0, stop);
+      else waypoints.push(stop);
+      return { ...current, waypoints };
+    });
     setDraftStop('');
+    setDraftPin(null);
+    setPinOpen(false);
+  };
+
+  const toggleGoing = (id: string) => {
+    if (!trip) return;
+    updateTrip(trip.id, (current) => ({
+      ...current,
+      waypoints: current.waypoints.map((stop) =>
+        stop.id === id && !isRouteEnd(stop) ? { ...stop, going: !stop.going } : stop,
+      ),
+    }));
+  };
+
+  const openSwap = () => {
+    if (!trip) return;
+    setSwapChoice(currentDriver(trip)?.id ?? null);
+    setSwapReason('');
+    setSwapOpen(true);
+  };
+
+  const confirmSwap = () => {
+    if (!trip || !swapChoice) return;
+    const person = trip.crew.find((member) => member.id === swapChoice);
+    const driving = currentDriver(trip);
+    if (!person || person.id === driving?.id) {
+      setSwapOpen(false);
+      return;
+    }
+    const why = swapReason.trim();
+    updateTrip(trip.id, (current) => ({ ...current, driverId: person.id }));
+    setRotationNote(why ? `${person.name} is driving · ${why}` : `${person.name} is driving`);
+    setSwapOpen(false);
   };
 
   const toggleLike = (id: string) => {
@@ -372,22 +499,80 @@ function CoDrive() {
     }));
   };
 
+  const openLaunch = (id: string) => {
+    setSelectedId(id);
+    setLaunchOpen(true);
+  };
+
+  const confirmLaunch = () => {
+    if (!trip || !journeyReady(trip)) return;
+    updateTrip(trip.id, (current) => ({
+      ...current,
+      status: 'live',
+      progress: current.progress > 0 ? current.progress : 0.04,
+      duration: current.duration === '—' ? 'Just started' : current.duration,
+    }));
+    setLaunchOpen(false);
+    setRotationSeen(false);
+    setTab('drive');
+  };
+
+  const openCrew = (id: string) => {
+    const current = trips.find((item) => item.id === id);
+    if (!current || !isTripCreator(current)) return;
+    setSelectedId(id);
+    setCrewOpen(true);
+  };
+
+  const addCrewMember = (personName: string) => {
+    if (!trip) return;
+    const person = crewFromName(personName, trip.crew.length);
+    if (!person || trip.crew.some((member) => member.name.toLowerCase() === person.name.toLowerCase())) return;
+    updateTrip(trip.id, (current) => ({ ...current, crew: [...current.crew, person] }));
+  };
+
+  const removeCrewMember = (memberId: string) => {
+    if (!trip || trip.crew.length <= 1 || memberId === trip.createdBy) return;
+    updateTrip(trip.id, (current) => {
+      const crew = current.crew.filter((member) => member.id !== memberId);
+      const drivingId = current.driverId || current.crew[0]?.id;
+      return {
+        ...current,
+        crew,
+        driverId: memberId === drivingId ? crew[0]?.id ?? current.driverId : current.driverId || drivingId || '',
+      };
+    });
+  };
+
+  const openExpense = () => {
+    setExpenseError(null);
+    setExpenseOpen(true);
+  };
+
+  const closeExpense = () => {
+    setExpenseOpen(false);
+    setExpenseError(null);
+  };
+
   const handleLog = async () => {
     if (!expenseReady || !trip || logging) return;
+    const target = trip;
     const notes = expenseNotes.trim();
     const paidBy = notes.match(/paid by\s+([^·,\n]+)/i)?.[1]?.trim() || 'You';
     const category = iconFor(expenseName);
     let expenseId = Date.now().toString();
 
-    if (isServerTrip(trip.id)) {
+    if (isServerTrip(target.id)) {
       setLogging(true);
       setExpenseError(null);
       try {
-        const saved = await logExpense(trip.id, {
+        const saved = await logExpense(target.id, {
           paid_by_user: paidBy,
           amount: amountValue,
           category,
+          title: expenseName.trim(),
           description: notes,
+          photos: expensePhotos,
         });
         expenseId = saved.id;
       } catch (error) {
@@ -398,7 +583,7 @@ function CoDrive() {
       setLogging(false);
     }
 
-    updateTrip(trip.id, (current) => ({
+    updateTrip(target.id, (current) => ({
       ...current,
       expenses: [
         {
@@ -407,6 +592,7 @@ function CoDrive() {
           details: notes,
           amount: amountValue,
           icon: category,
+          photos: expensePhotos,
         },
         ...current.expenses,
       ],
@@ -414,10 +600,11 @@ function CoDrive() {
     setExpenseName('');
     setExpenseAmount('');
     setExpenseNotes('');
+    setExpensePhotos([]);
     setExpenseOpen(false);
   };
 
-  const driver = trip?.crew[0]?.name ?? 'Ava';
+  const driver = (trip ? currentDriver(trip)?.name : undefined) ?? 'Ava';
   const driverLine =
     driver === 'You'
       ? 'You have reached the group set drive limit of '
@@ -427,7 +614,15 @@ function CoDrive() {
     <View style={styles.stage}>
       <View style={styles.phone}>
         <StatusBar style="dark" />
-        <View style={[styles.column, { paddingTop: insets.top, backgroundColor: tab === 'drive' ? C.map : C.cream }]}>
+        <View
+          style={[
+            styles.column,
+            {
+              paddingTop: insets.top,
+              backgroundColor: tab === 'drive' && trip?.status === 'live' ? C.map : C.cream,
+            },
+          ]}
+        >
           <View style={styles.fill}>
             {tab === 'home' ? (
               <HomeScreen
@@ -438,6 +633,8 @@ function CoDrive() {
                 onDelete={deleteTrip}
                 onEdit={openEdit}
                 onProfile={() => setProfileOpen(true)}
+                onStart={openLaunch}
+                onCrew={openCrew}
               />
             ) : null}
             {!trip && tab !== 'home' ? (
@@ -450,21 +647,29 @@ function CoDrive() {
                 trip={trip}
                 draft={draftStop}
                 onDraft={setDraftStop}
-                onAdd={addStop}
+                onAdd={openStopPin}
                 onLike={toggleLike}
+                onToggleGoing={toggleGoing}
+                onSwap={openSwap}
                 onInvite={() => setInviteOpen(true)}
+                onStart={() => openLaunch(trip.id)}
+                onOpenDrive={() => setTab('drive')}
+                onCrew={() => openCrew(trip.id)}
               />
             ) : null}
             {tab === 'drive' && trip ? (
               <DriveScreen
                 trip={trip}
-                fullMap={rotationOpen || connectionOpen}
+                fullMap={rotationOpen || connectionOpen || swapOpen}
                 note={rotationNote}
                 onRotation={() => setRotationOpen(true)}
+                onSwap={openSwap}
+                onToggleGoing={toggleGoing}
                 onConnection={() => setConnectionOpen(true)}
+                onStart={() => openLaunch(trip.id)}
               />
             ) : null}
-            {tab === 'costs' && trip ? <CostsScreen trip={trip} onLog={() => setExpenseOpen(true)} /> : null}
+            {tab === 'costs' && trip ? <CostsScreen trip={trip} trips={trips} onSelectTrip={setSelectedId} onLog={openExpense} /> : null}
           </View>
           <TabBar tab={tab} onChange={setTab} paddingBottom={insets.bottom} />
         </View>
@@ -500,14 +705,13 @@ function CoDrive() {
             name={expenseName}
             amount={expenseAmount}
             notes={expenseNotes}
+            photos={expensePhotos}
             onName={setExpenseName}
             onAmount={setExpenseAmount}
             onNotes={setExpenseNotes}
+            onPhotos={setExpensePhotos}
             onLog={handleLog}
-            onClose={() => {
-              setExpenseOpen(false);
-              setExpenseError(null);
-            }}
+            onClose={closeExpense}
             canLog={expenseReady}
             submitting={logging}
             error={expenseError}
@@ -527,10 +731,51 @@ function CoDrive() {
               setRotationNote('Reminder in 10 min');
               setRotationOpen(false);
             }}
+            onSwap={() => {
+              setRotationOpen(false);
+              openSwap();
+            }}
+          />
+        ) : null}
+
+        {swapOpen && trip ? (
+          <SwapDriverDialog
+            crew={trip.crew}
+            driverId={currentDriver(trip)?.id}
+            choice={swapChoice}
+            reason={swapReason}
+            onChoice={setSwapChoice}
+            onReason={setSwapReason}
+            onConfirm={confirmSwap}
+            onClose={() => setSwapOpen(false)}
+          />
+        ) : null}
+
+        {pinOpen && trip ? (
+          <StopPinDialog
+            title={draftStop.trim()}
+            stops={trip.waypoints}
+            pin={draftPin}
+            onPin={setDraftPin}
+            onConfirm={confirmStop}
+            onClose={() => setPinOpen(false)}
           />
         ) : null}
 
         {connectionOpen ? <ConnectionDialog driverName={driver} onClose={() => setConnectionOpen(false)} /> : null}
+
+        {launchOpen && trip ? (
+          <LaunchDialog trip={trip} onClose={() => setLaunchOpen(false)} onLaunch={confirmLaunch} />
+        ) : null}
+
+        {crewOpen && trip && isTripCreator(trip) ? (
+          <CrewDialog
+            trip={trip}
+            onClose={() => setCrewOpen(false)}
+            onAdd={addCrewMember}
+            onRemove={removeCrewMember}
+          />
+        ) : null}
 
         {profileOpen ? (
           <ProfileDialog
