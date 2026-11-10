@@ -2,13 +2,13 @@ import { useEffect, useState } from 'react';
 import { BackHandler, Platform, StyleSheet, Text, View } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
-import { createTrip, isServerTrip, listTrips, logExpense, type AddressSuggestion, type ApiTrip, type Spot } from './src/api';
+import { createTrip, getTrip, isServerTrip, listTrips, logExpense, type AddressSuggestion, type ApiExpense, type ApiTrip, type Spot } from './src/api';
 import { MapBackdrop } from './src/components/MapBackdrop';
 import { TabBar } from './src/components/TabBar';
 import { CREW, IMG, TRIPS } from './src/data';
 import { formatIso, formatTripDates } from './src/dates';
 import { currentDrivers, formatLimit } from './src/drivers';
-import { orderPayers, payerOptions, togglePayer } from './src/expenses';
+import { EXPENSE_TYPES, orderPayers, payerOptions, togglePayer } from './src/expenses';
 import { ConnectionDialog } from './src/screens/ConnectionDialog';
 import { CostsScreen } from './src/screens/CostsScreen';
 import { CreateTripDialog } from './src/screens/CreateTripDialog';
@@ -24,7 +24,24 @@ import { TripSettingsScreen, type TripSettings } from './src/screens/TripSetting
 import { applyEndpoints, spotFor, where } from './src/stops';
 import { C } from './src/theme';
 import { castVote } from './src/votes';
-import type { Crew, ExpenseType, Tab, Trip } from './src/types';
+import type { Crew, Expense, ExpenseType, Tab, Trip } from './src/types';
+
+function expenseFromApi(row: ApiExpense): Expense {
+  const type = EXPENSE_TYPES.some((item) => item.value === row.category) ? (row.category as ExpenseType) : 'other';
+  const paidBy = row.paid_by_user
+    .split(',')
+    .map((name) => name.trim())
+    .filter((name) => name.length > 0);
+  return {
+    id: row.id,
+    title: row.title || row.category,
+    paidBy: paidBy.length > 0 ? paidBy : ['You'],
+    notes: row.description,
+    amount: row.amount,
+    type,
+    photos: row.photos,
+  };
+}
 
 function tripFromApi(row: ApiTrip): Trip {
   const created = new Date(row.created_at);
@@ -72,6 +89,7 @@ function CoDrive() {
   const [expenseName, setExpenseName] = useState('');
   const [expenseAmount, setExpenseAmount] = useState('');
   const [expenseNotes, setExpenseNotes] = useState('');
+  const [expensePhotos, setExpensePhotos] = useState<string[]>([]);
   const [profileOpen, setProfileOpen] = useState(false);
   const [profileUri, setProfileUri] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
@@ -100,6 +118,23 @@ function CoDrive() {
       active = false;
     };
   }, []);
+
+  const tripId = trip?.id;
+  useEffect(() => {
+    if (tab !== 'costs' || !tripId || !isServerTrip(tripId)) return;
+    let active = true;
+    getTrip(tripId)
+      .then((saved) => {
+        if (!active) return;
+        setTrips((current) =>
+          current.map((item) => (item.id === tripId ? { ...item, expenses: saved.expenses.map(expenseFromApi) } : item)),
+        );
+      })
+      .catch(() => undefined);
+    return () => {
+      active = false;
+    };
+  }, [tab, tripId]);
 
   useEffect(() => {
     const sub = BackHandler.addEventListener('hardwareBackPress', () => {
@@ -327,7 +362,9 @@ function CoDrive() {
           paid_by_user: paidBy.join(', '),
           amount: amountValue,
           category,
+          title: expenseName.trim(),
           description: notes,
+          photos: expensePhotos,
         });
         expenseId = saved.id;
       } catch (error) {
@@ -348,6 +385,7 @@ function CoDrive() {
           notes,
           amount: amountValue,
           type: category,
+          photos: expensePhotos,
         },
         ...current.expenses,
       ],
@@ -357,6 +395,7 @@ function CoDrive() {
     setExpenseName('');
     setExpenseAmount('');
     setExpenseNotes('');
+    setExpensePhotos([]);
     setExpenseOpen(false);
   };
 
@@ -453,11 +492,13 @@ function CoDrive() {
             payers={payers}
             paidBy={activePayers}
             notes={expenseNotes}
+            photos={expensePhotos}
             onType={setExpenseType}
             onName={setExpenseName}
             onAmount={setExpenseAmount}
             onPayer={(name) => setExpensePaidBy(togglePayer(activePayers, name))}
             onNotes={setExpenseNotes}
+            onPhotos={setExpensePhotos}
             onLog={handleLog}
             onClose={() => {
               setExpenseOpen(false);

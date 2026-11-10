@@ -26,6 +26,15 @@
     },
     "web": {
       "favicon": "./assets/favicon.png"
-    }
+    },
+    "plugins": [
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "CoDrive uses your photos so you can attach receipts and trip pictures.",
+          "cameraPermission": "CoDrive uses your camera so you can snap receipts for shared expenses."
+        }
+      ]
+    ]
   }
 }

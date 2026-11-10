@@ -1,4 +1,5 @@
-import { ScrollView, StyleSheet, Text, View } from 'react-native';
+import { useState } from 'react';
+import { Image, Modal, Pressable, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { money } from '../data';
 import { expenseDetails } from '../expenses';
@@ -23,6 +24,7 @@ export function CostsScreen({
   const spent = trip.expenses.reduce((sum, item) => sum + item.amount, 0);
   const remaining = Math.max(0, trip.budget - spent);
   const progress = trip.budget > 0 ? spent / trip.budget : 0;
+  const [viewing, setViewing] = useState<string | null>(null);
 
   return (
     <View style={layout.fill}>
@@ -58,13 +60,28 @@ export function CostsScreen({
           </View>
         ) : (
           trip.expenses.map((expense) => (
-            <View key={expense.id} style={styles.row}>
-              <ExpenseGlyph kind={expense.type} />
-              <View style={styles.copy}>
-                <Text style={styles.title}>{expense.title}</Text>
-                <Text style={styles.details}>{expenseDetails(expense.paidBy, expense.notes)}</Text>
+            <View key={expense.id} style={styles.card}>
+              <View style={styles.row}>
+                <ExpenseGlyph kind={expense.type} />
+                <View style={styles.copy}>
+                  <Text style={styles.title}>{expense.title}</Text>
+                  <Text style={styles.details}>{expenseDetails(expense.paidBy, expense.notes)}</Text>
+                </View>
+                <Text style={styles.amount}>{money(expense.amount)}</Text>
               </View>
-              <Text style={styles.amount}>{money(expense.amount)}</Text>
+              {expense.photos?.length ? (
+                <View style={styles.photos}>
+                  {expense.photos.map((uri, index) => (
+                    <TouchableOpacity
+                      key={`${expense.id}-${index}`}
+                      onPress={() => setViewing(uri)}
+                      accessibilityLabel={`Open photo ${index + 1} for ${expense.title}`}
+                    >
+                      <Image source={{ uri }} style={styles.thumb} />
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              ) : null}
             </View>
           ))
         )}
@@ -74,6 +91,11 @@ export function CostsScreen({
           <PrimaryButton label="Log Expense" onPress={onLog} icon={<Ionicons name="add" size={18} color={C.white} />} />
         </View>
       ) : null}
+      <Modal visible={viewing !== null} transparent animationType="fade" onRequestClose={() => setViewing(null)}>
+        <Pressable style={styles.viewer} onPress={() => setViewing(null)} accessibilityLabel="Close photo">
+          {viewing ? <Image source={{ uri: viewing }} style={styles.full} resizeMode="contain" /> : null}
+        </Pressable>
+      </Modal>
     </View>
   );
 }
@@ -112,15 +134,40 @@ const styles = StyleSheet.create({
     color: C.teal,
     textDecorationLine: 'underline',
   },
-  row: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
+  card: {
     backgroundColor: C.white,
     borderRadius: 16,
     padding: 12,
     marginBottom: 10,
     ...cardShadow,
+  },
+  row: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  photos: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginTop: 10,
+  },
+  thumb: {
+    width: 56,
+    height: 56,
+    borderRadius: 10,
+    backgroundColor: C.field,
+  },
+  viewer: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.9)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 16,
+  },
+  full: {
+    width: '100%',
+    height: '100%',
   },
   copy: {
     flex: 1,

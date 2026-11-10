@@ -45,6 +45,7 @@ export interface Expense {
   notes: string;
   amount: number;
   type: ExpenseType;
+  photos?: string[];
 }
 
 /** A crew member who can drive, and the longest they should drive without a rest. */

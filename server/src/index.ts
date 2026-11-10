@@ -15,7 +15,7 @@ import {
 } from './geo.js';
 
 const app = express();
-app.use(express.json());
+app.use(express.json({ limit: '25mb' }));
 app.use((req, res, next) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
@@ -178,10 +178,10 @@ app.get('/api/trips/:id', wrap(async (req, res) => {
     [tripId],
   );
   const expenses = await pool.query(
-    `SELECT id, trip_id, paid_by_user, amount, category, description
+    `SELECT id, trip_id, paid_by_user, amount, category, title, description, photos
      FROM expenses
      WHERE trip_id = $1
-     ORDER BY id`,
+     ORDER BY created_at DESC`,
     [tripId],
   );
 
@@ -202,7 +202,9 @@ app.post('/api/trips/:id/expenses', wrap(async (req, res) => {
   const paidByUser = text(req.body?.paid_by_user);
   const amount = number(req.body?.amount);
   const category = text(req.body?.category);
+  const title = descriptionText(req.body?.title);
   const description = descriptionText(req.body?.description);
+  const photos = photoList(req.body?.photos);
   if (!paidByUser) {
     res.status(400).json({ error: 'paid_by_user is required' });
     return;
@@ -219,6 +221,14 @@ app.post('/api/trips/:id/expenses', wrap(async (req, res) => {
     res.status(400).json({ error: 'description must be text' });
     return;
   }
+  if (title === null) {
+    res.status(400).json({ error: 'title must be text' });
+    return;
+  }
+  if (photos === null) {
+    res.status(400).json({ error: `photos must be up to ${MAX_PHOTOS} image data URLs` });
+    return;
+  }
 
   const trip = await pool.query('SELECT id FROM trips WHERE id = $1', [tripId]);
   if (trip.rowCount === 0) {
@@ -227,10 +237,10 @@ app.post('/api/trips/:id/expenses', wrap(async (req, res) => {
   }
 
   const inserted = await pool.query(
-    `INSERT INTO expenses (trip_id, paid_by_user, amount, category, description)
-     VALUES ($1, $2, $3, $4, $5)
-     RETURNING id, trip_id, paid_by_user, amount, category, description`,
-    [tripId, paidByUser, amount, category, description],
+    `INSERT INTO expenses (trip_id, paid_by_user, amount, category, title, description, photos)
+     VALUES ($1, $2, $3, $4, $5, $6, $7)
+     RETURNING id, trip_id, paid_by_user, amount, category, title, description, photos`,
+    [tripId, paidByUser, amount, category, title, description, photos],
   );
   res.status(201).json(expenseRow(inserted.rows[0]));
 }));
@@ -410,6 +420,18 @@ function descriptionText(value: unknown): string | null {
   return value.trim();
 }
 
+const MAX_PHOTOS = 4;
+const MAX_PHOTO_LENGTH = 6_000_000;
+
+function photoList(value: unknown): string[] | null {
+  if (value === undefined) return [];
+  if (!Array.isArray(value) || value.length > MAX_PHOTOS) return null;
+  const valid = value.every(
+    (item) => typeof item === 'string' && item.startsWith('data:image/') && item.length <= MAX_PHOTO_LENGTH,
+  );
+  return valid ? (value as string[]) : null;
+}
+
 function text(value: unknown): string | null {
   if (typeof value !== 'string') return null;
   const trimmed = value.trim();
@@ -479,7 +501,9 @@ function expenseRow(row: {
   paid_by_user: string;
   amount: number | string;
   category: string;
+  title: string;
   description: string;
+  photos: string[] | null;
 }) {
   return {
     id: row.id,
@@ -487,6 +511,8 @@ function expenseRow(row: {
     paid_by_user: row.paid_by_user,
     amount: Number(row.amount),
     category: row.category,
+    title: row.title,
     description: row.description,
+    photos: row.photos ?? [],
   };
 }
