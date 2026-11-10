@@ -2,7 +2,12 @@
 
 CoDrive is a mobile-first road-trip app for planning a route with your crew, rotating drivers, and splitting costs. It runs in Expo Go and in the browser.
 
+`main` is the version we showcase and host. Branch, push, and merge using [CONTRIBUTING.md](CONTRIBUTING.md).
+
 ## Run
+
+start.sh is created to run all needed commands automatically
+Just run ./start.sh in terminal to run them all. Ensure docker is open.
 
 ```bash
 npm install

@@ -1,0 +1,16 @@
+---
+description: Branch, push, and merge rules. main stays the runnable showcase and hosted version.
+alwaysApply: true
+---
+
+# Git workflow
+
+Follow `CONTRIBUTING.md` for every branch, commit, push, and merge.
+
+- `main` is the newest runnable app: showcase and hosting. Never commit, push, or force-push directly to `main`. Never merge work that does not run.
+- Branch from an updated `main`. One branch, one change. Name it `feature/`, `fix/`, `chore/`, or `docs/` plus a lowercase kebab-case description (`feature/split-expenses`).
+- Push the same day the branch is created, and after every working commit. Open a draft pull request early so the timeline is visible and two people do not build the same change.
+- Update the branch from `main` before the pull request is ready. Merge only through that pull request, then delete the branch.
+- Do not commit secrets. `server/.env` stays local.
+
+When asked to commit, push, or open a pull request, use the current task branch. If the work is on `main`, stop and create the branch above first. Do not push to `main` to "update the demo"; the merged pull request is what updates `main`.

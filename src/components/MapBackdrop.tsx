@@ -47,7 +47,7 @@ export function MapBackdrop() {
         />
 
         {/* City blocks and parks */}
-        <G rotation={-14} origin="195, 422">
+        <G transform="rotate(-14 195 422)">
           <Rect x={40} y={150} width={92} height={64} rx={8} fill={BLOCK} />
           <Rect x={236} y={238} width={70} height={92} rx={8} fill={BLOCK} />
           <Rect x={92} y={640} width={110} height={58} rx={8} fill={BLOCK} />
