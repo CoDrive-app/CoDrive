@@ -344,6 +344,7 @@ function CoDrive({ user, onSignOut }: { user: ApiUser; onSignOut: () => void }) 
         endDate: settings.endDate || undefined,
         budget: settings.budget,
         image: settings.image,
+        crew: settings.crew,
         drivers: settings.drivers,
         leg: settings.start && settings.end ? `${settings.start} to ${settings.end}` : current.leg,
         waypoints: applyEndpoints(current, settings.start, settings.end, settings.startSpot, settings.endSpot),

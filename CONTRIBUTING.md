@@ -1,22 +1,94 @@
-# Contributing & Staging Workflow
+# How we branch, push, and merge
 
-## Core Rules (Non-Negotiable)
-1. **Never push directly to `main`.** All changes enter `main` via a Pull Request from a feature branch (`feature-branch` -> `main`).
-2. **Never merge `staging` into `main`.** `staging` is strictly a testing environment. Even after a feature passes on `staging`, merge the original `feature-branch` into `main`.
+`main` is the app we showcase and the app we host. It must be the newest version that actually runs. Everything else is a short-lived branch that lands on `main` through a pull request.
 
-## How to Use `staging`
-`staging` is reset to match `main` automatically whenever a PR merges into `main`.
+Work this way on every change, including docs-only and config-only changes.
 
-1. **Quick heads-up:** Drop a quick message in team chat before pushing to `staging` so you don't overwrite someone else's active test. *(If two people really need to test small, unrelated changes together, coordinate first—just remember that if `staging` breaks, you'll have to untangle which branch caused it.)*
-2. **Ensure a clean slate:** If the previous feature on `staging` was rejected or abandoned, run the **Sync Staging to Main** workflow in the GitHub Actions tab before pushing yours.
-3. **Deploy & verify:** Merge your `feature-branch` into `staging` and push. Wait for automated tests and the fake DB reset/seed to finish, then run your manual QA.
-4. **Ship or fix:**
-   - **Approved:** Merge your `feature-branch` -> `main` PR. (`staging` will auto-sync back to `main` afterward.)
-   - **Needs work:** Make fixes on your `feature-branch` (not directly on `staging`), then re-merge into `staging` to re-test.
+## `main`
 
-## Skipping `staging`
-Small, low-risk changes—such as documentation updates, copy tweaks, or minor styling fixes—do not need to go through `staging`. Open a PR directly to `main` and merge once automated CI checks pass.
+- `main` is always runnable: `./start.sh` starts the database, API, and app, and the current showcase path works.
+- Do not commit or push straight to `main`.
+- Do not force-push `main`.
+- Do not merge a pull request that leaves `main` unable to start or that breaks the flow you just changed.
+- After a merge, `main` is what we demo and what hosting deploys. If it is not ready to show, it does not belong on `main`.
 
-## Notes for AI Agents
-- Do not run `git push --force` on `staging` or open PRs from `staging` to `main` unless explicitly asked by the user.
-- Always make code edits on a feature branch, never directly on `main` or `staging`.
+## Branch from `main`
+
+Start every branch from an up-to-date `main`.
+
+```bash
+git checkout main
+git pull origin main
+git checkout -b feature/driver-rotation
+```
+
+One branch is one change. A map-tile fix and a new expense field are two branches. If two people need the same area, the open pull request is how you see that before the work overlaps.
+
+Name the branch so the history reads without opening the code:
+
+```text
+<type>/<what-it-does>
+```
+
+| Type | Use for |
+| --- | --- |
+| `feature/` | New behavior a user can see or call |
+| `fix/` | A bug in something that already shipped |
+| `chore/` | Tooling, dependencies, config, refactors with no behavior change |
+| `docs/` | Documentation only |
+
+Use lowercase kebab-case after the slash. Examples: `feature/split-expenses`, `fix/trip-delete`, `chore/expo-sdk`, `docs/api-routes`.
+
+The type is the only prefix. Do not add personal names, ticket-only names (`Backend-server`, `ui-setup`), or a branch that keeps growing after its pull request merges.
+
+## Push often
+
+Push the branch the day you create it, then push again after every working slice. A working slice is a commit that builds and moves the change forward, even if the feature is unfinished. Once a day is the minimum while the branch is active. More often is better.
+
+```bash
+git push -u origin HEAD
+```
+
+Small, frequent pushes keep the remote timeline readable and show everyone what is in progress. An open draft pull request does the same job: open it as soon as the branch exists, and mark it ready when the change runs.
+
+Before you push, update from `main` if `main` has moved:
+
+```bash
+git checkout main
+git pull origin main
+git checkout feature/driver-rotation
+git merge main
+```
+
+Resolve conflicts on your branch. Leave `main` alone until the pull request is ready.
+
+## Merge through a pull request
+
+When the branch runs, open or mark the pull request ready and merge it into `main`.
+
+Before merge, confirm:
+
+- The branch is up to date with `main`.
+- `./start.sh` brings the app up, or you state exactly which step you ran and what you checked.
+- The pull request describes what changed and how you checked it.
+- The change is the one thing the branch was opened for.
+
+Merge, then delete the branch on GitHub and locally (`git branch -d feature/driver-rotation`). The next task starts from a fresh `main`, not from the old branch.
+
+A fix for something already on `main` uses the same path: `fix/...` from current `main`, push, pull request, merge. Do not patch `main` in place.
+
+## Commits
+
+Write the subject in the imperative, and say why when the diff does not.
+
+```text
+Add driver color stretches on the route
+
+Split the line by the hours set on the Trip tab so a demo can show the handoff.
+```
+
+Commit when a slice is coherent. Push that commit. Do not stockpile a day of work only on your machine.
+
+## What not to push
+
+Do not commit secrets (`.env`, API keys, credentials). `server/.env` stays local. `server/.env.example` is the file that belongs in git.

@@ -1,5 +1,5 @@
 import { useMemo, useRef, useState } from 'react';
-import { Image, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { Image, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 import type { Spot } from '../api';
@@ -8,11 +8,12 @@ import { PrimaryButton } from '../components/Buttons';
 import { DateField } from '../components/DateField';
 import { Field } from '../components/Field';
 import { WheelPicker } from '../components/WheelPicker';
+import { crewFromName, crewMemberLocked } from '../crew';
 import { parseTripDates } from '../dates';
 import { joinLimit, setLimit, splitLimit, toggleDriver } from '../drivers';
 import { endpoint, spotFor, spotOf } from '../stops';
 import { C, layout } from '../theme';
-import type { Driver, Trip } from '../types';
+import type { Crew, Driver, Trip } from '../types';
 
 export type TripSettings = {
   title: string;
@@ -27,6 +28,7 @@ export type TripSettings = {
   budget: number;
   image: string;
   drivers: Driver[];
+  crew: Crew[];
 };
 
 type Draft = {
@@ -40,6 +42,7 @@ type Draft = {
   budget: string;
   image: string;
   drivers: Driver[];
+  crew: Crew[];
 };
 
 function draftFrom(trip: Trip): Draft {
@@ -57,13 +60,15 @@ function draftFrom(trip: Trip): Draft {
     budget: trip.budget > 0 ? String(trip.budget) : '',
     image: trip.image,
     drivers: trip.drivers.filter((driver) => trip.crew.some((member) => member.id === driver.crewId)),
+    crew: trip.crew,
   };
 }
 
 /** The draft in a form that can be compared, so the Save button knows if anything changed. */
-function snapshot(draft: Draft, crewOrder: string[]) {
+function snapshot(draft: Draft) {
   const start = draft.start.trim();
   const end = draft.end.trim();
+  const crewOrder = draft.crew.map((member) => member.id);
   return JSON.stringify({
     title: draft.title.trim(),
     start,
@@ -74,12 +79,13 @@ function snapshot(draft: Draft, crewOrder: string[]) {
     endDate: draft.endDate,
     budget: draft.budget.trim() === '' ? 0 : Number(draft.budget),
     image: draft.image,
+    crew: draft.crew,
     drivers: [...draft.drivers].sort((a, b) => crewOrder.indexOf(a.crewId) - crewOrder.indexOf(b.crewId)),
   });
 }
 
 /**
- * Everything about a trip except its stops: name, start and end, dates, budget, picture, and who drives.
+ * Everything about a trip except its stops: name, start and end, dates, budget, picture, crew, and who drives.
  * Changes are kept in a draft until Save, so half-typed addresses never reach the route.
  */
 export function TripSettingsScreen({
@@ -96,10 +102,11 @@ export function TripSettingsScreen({
   const initial = useMemo(() => draftFrom(trip), [trip]);
   const [draft, setDraft] = useState<Draft>(initial);
   const [photoNote, setPhotoNote] = useState<string | null>(null);
+  const [crewName, setCrewName] = useState('');
+  const [crewNote, setCrewNote] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [saved, setSaved] = useState(false);
 
-  const crewOrder = trip.crew.map((member) => member.id);
   const change = (patch: Partial<Draft>) => {
     setSaved(false);
     setDraft((current) => ({ ...current, ...patch }));
@@ -109,8 +116,8 @@ export function TripSettingsScreen({
   const budgetValue = budgetText === '' ? 0 : Number(budgetText);
   const budgetOk = budgetText === '' || (Number.isFinite(budgetValue) && budgetValue > 0);
   const datesOk = !draft.startDate || !draft.endDate || draft.endDate >= draft.startDate;
-  const valid = draft.title.trim().length > 0 && budgetOk && datesOk;
-  const dirty = snapshot(draft, crewOrder) !== snapshot(initial, crewOrder);
+  const valid = draft.title.trim().length > 0 && budgetOk && datesOk && draft.crew.length > 0;
+  const dirty = snapshot(draft) !== snapshot(initial);
 
   const start = draft.start.trim();
   const end = draft.end.trim();
@@ -122,6 +129,27 @@ export function TripSettingsScreen({
       : !startSpot || !endSpot
         ? 'Pick Start and End from the suggestions so the route can be drawn.'
         : null;
+
+  const addCrew = () => {
+    const person = crewFromName(crewName, draft.crew.length);
+    if (!person) return;
+    if (draft.crew.some((member) => member.name.toLowerCase() === person.name.toLowerCase())) {
+      setCrewNote(`${person.name} is already on this trip.`);
+      return;
+    }
+    setCrewNote(null);
+    setCrewName('');
+    change({ crew: [...draft.crew, person] });
+  };
+
+  const removeCrew = (id: string) => {
+    const member = draft.crew.find((item) => item.id === id);
+    if (!member || crewMemberLocked(draft.crew, member)) return;
+    change({
+      crew: draft.crew.filter((item) => item.id !== id),
+      drivers: draft.drivers.filter((driver) => driver.crewId !== id),
+    });
+  };
 
   const choosePhoto = async () => {
     setBusy(true);
@@ -156,7 +184,8 @@ export function TripSettingsScreen({
       endDate: draft.endDate,
       budget: budgetValue,
       image: draft.image,
-      drivers: draft.drivers,
+      drivers: draft.drivers.filter((driver) => draft.crew.some((member) => member.id === driver.crewId)),
+      crew: draft.crew,
     });
     setSaved(true);
   };
@@ -220,11 +249,65 @@ export function TripSettingsScreen({
         <Text style={styles.hint}>{busy ? 'Opening…' : 'Tap the picture to change it'}</Text>
         {photoNote ? <Text style={styles.hint}>{photoNote}</Text> : null}
 
+        <Text style={layout.section}>Crew</Text>
+        <Text style={styles.sub}>Add the people coming on this trip. Save to keep the list.</Text>
+        {draft.crew.map((member) => {
+          const locked = crewMemberLocked(draft.crew, member);
+          return (
+            <View key={member.id} style={styles.crewRow}>
+              <View style={[styles.avatar, { backgroundColor: member.color }]}>
+                <Text style={styles.avatarText}>{member.initial}</Text>
+              </View>
+              <View style={styles.crewCopy}>
+                <Text style={styles.name} numberOfLines={1}>
+                  {member.name}
+                </Text>
+                {member.id === 'you' ? <Text style={styles.role}>Stays on the trip</Text> : null}
+              </View>
+              <TouchableOpacity
+                style={styles.remove}
+                onPress={() => removeCrew(member.id)}
+                disabled={locked}
+                activeOpacity={0.7}
+                accessibilityLabel={locked ? `${member.name} stays on the trip` : `Remove ${member.name}`}
+              >
+                <Ionicons name="close" size={18} color={locked ? C.line : C.muted} />
+              </TouchableOpacity>
+            </View>
+          );
+        })}
+        <View style={styles.addRow}>
+          <TextInput
+            style={styles.addInput}
+            placeholder="Add a name"
+            placeholderTextColor={C.faint}
+            value={crewName}
+            onChangeText={(value) => {
+              setCrewName(value);
+              setCrewNote(null);
+            }}
+            onSubmitEditing={addCrew}
+            returnKeyType="done"
+            autoCapitalize="words"
+            maxLength={40}
+          />
+          <TouchableOpacity
+            style={[styles.add, crewName.trim().length === 0 && styles.addOff]}
+            onPress={addCrew}
+            disabled={crewName.trim().length === 0}
+            activeOpacity={0.85}
+            accessibilityLabel="Add to crew"
+          >
+            <Ionicons name="add" size={22} color={C.white} />
+          </TouchableOpacity>
+        </View>
+        {crewNote ? <Text style={styles.hint}>{crewNote}</Text> : null}
+
         <Text style={layout.section}>Drivers</Text>
         <Text style={styles.sub}>
           Tick who can drive, then set how long each driver can go before a rotation is due. Each limit can be from 1 to 12 hours.
         </Text>
-        {trip.crew.map((member) => {
+        {draft.crew.map((member) => {
           const driver = draft.drivers.find((item) => item.crewId === member.id);
           const parts = driver ? splitLimit(driver.limitMinutes) : null;
           return (
@@ -368,6 +451,58 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
+  },
+  crewRow: {
+    marginTop: 10,
+    minHeight: 56,
+    borderRadius: 16,
+    backgroundColor: C.white,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  crewCopy: {
+    flex: 1,
+  },
+  role: {
+    marginTop: 2,
+    fontSize: 12,
+    fontWeight: '600',
+    color: C.teal,
+  },
+  remove: {
+    width: 32,
+    height: 32,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  addRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    marginTop: 10,
+  },
+  addInput: {
+    flex: 1,
+    height: 48,
+    borderRadius: 12,
+    backgroundColor: C.field,
+    paddingHorizontal: 14,
+    fontSize: 16,
+    color: C.ink,
+  },
+  add: {
+    width: 48,
+    height: 48,
+    borderRadius: 12,
+    backgroundColor: C.teal,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  addOff: {
+    opacity: 0.4,
   },
   save: {
     marginTop: 20,
