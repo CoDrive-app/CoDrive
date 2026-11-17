@@ -1,0 +1,25 @@
+name: Sync Staging to Main
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch: # Adds a manual "Run workflow" button in the GitHub Actions tab
+
+permissions:
+  contents: write
+
+jobs:
+  reset-staging:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Reset staging to match main
+        run: |
+          git fetch origin main staging
+          git checkout -B staging origin/main
+          git push --force-with-lease origin staging
