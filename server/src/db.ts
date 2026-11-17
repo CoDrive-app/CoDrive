@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
@@ -12,9 +12,12 @@ export const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
 });
 
+/** Runs every file in sql/ in name order. Each file must be safe to run again on every start. */
 export async function migrate() {
-  const schema = readFileSync(join(serverRoot, 'sql/001_schema.sql'), 'utf8');
-  await pool.query(schema);
+  const dir = join(serverRoot, 'sql');
+  for (const file of readdirSync(dir).filter((name) => name.endsWith('.sql')).sort()) {
+    await pool.query(readFileSync(join(dir, file), 'utf8'));
+  }
 }
 
 function loadEnv(envPath: string) {

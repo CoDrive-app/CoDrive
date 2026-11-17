@@ -1,5 +1,15 @@
 import { randomBytes } from 'node:crypto';
 import express, { type NextFunction, type Request, type Response } from 'express';
+import {
+  bearerToken,
+  createSession,
+  currentUser,
+  endSession,
+  hashPassword,
+  requireUser,
+  verifyPassword,
+  type User,
+} from './auth.js';
 import { migrate, pool } from './db.js';
 import {
   autocompleteAddress,
@@ -15,11 +25,16 @@ import {
 } from './geo.js';
 
 const app = express();
+app.disable('x-powered-by');
+// Behind a host's proxy (Render), req.ip is the proxy unless the forwarded address is trusted.
+// Rate limits are per caller, so set TRUST_PROXY=1 there. Leave it unset locally.
+if (process.env.TRUST_PROXY) app.set('trust proxy', Number(process.env.TRUST_PROXY) || 1);
 app.use(express.json({ limit: '25mb' }));
 app.use((req, res, next) => {
+  // Sign-in uses a bearer token, not cookies, so allowing any origin does not expose other users' data.
   res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
-  res.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+  res.setHeader('Access-Control-Allow-Methods', 'GET,POST,DELETE,OPTIONS');
   if (req.method === 'OPTIONS') {
     res.sendStatus(204);
     return;
@@ -32,10 +47,89 @@ app.get('/health', wrap(async (_req, res) => {
   res.json({ ok: true });
 }));
 
+const signInLimited = createRateLimiter(20, 60_000);
+const emailLimited = createRateLimiter(10, 15 * 60_000);
+const joinLimited = createRateLimiter(10, 60_000);
+
+app.post('/api/auth/signup', wrap(async (req, res) => {
+  if (signInLimited(req.ip ?? 'unknown')) {
+    res.status(429).json({ error: 'Too many attempts. Try again in a minute.' });
+    return;
+  }
+  const name = text(req.body?.name);
+  const email = emailText(req.body?.email);
+  const password = req.body?.password;
+  if (!name || name.length > 60) {
+    res.status(400).json({ error: 'Enter a name up to 60 characters' });
+    return;
+  }
+  if (!email) {
+    res.status(400).json({ error: 'Enter a valid email address' });
+    return;
+  }
+  if (typeof password !== 'string' || password.length < 8 || password.length > 200) {
+    res.status(400).json({ error: 'Use a password of at least 8 characters' });
+    return;
+  }
+
+  try {
+    const result = await pool.query<User>(
+      `INSERT INTO users (email, name, password_hash)
+       VALUES ($1, $2, $3)
+       RETURNING id, email, name`,
+      [email, name, await hashPassword(password)],
+    );
+    const user = result.rows[0];
+    res.status(201).json({ token: await createSession(user.id), user });
+  } catch (error) {
+    if (isUniqueViolation(error)) {
+      res.status(409).json({ error: 'An account with that email already exists. Sign in instead.' });
+      return;
+    }
+    throw error;
+  }
+}));
+
+app.post('/api/auth/login', wrap(async (req, res) => {
+  const email = emailText(req.body?.email);
+  const password = typeof req.body?.password === 'string' ? req.body.password : '';
+  if (signInLimited(req.ip ?? 'unknown') || (email && emailLimited(email))) {
+    res.status(429).json({ error: 'Too many attempts. Try again in a few minutes.' });
+    return;
+  }
+
+  const result = email
+    ? await pool.query<User & { password_hash: string }>(
+        'SELECT id, email, name, password_hash FROM users WHERE lower(email) = $1',
+        [email],
+      )
+    : null;
+  const found = result?.rows[0];
+  const ok = await verifyPassword(password, found?.password_hash ?? null);
+  if (!found || !ok) {
+    res.status(401).json({ error: 'That email and password do not match' });
+    return;
+  }
+  res.json({ token: await createSession(found.id), user: { id: found.id, email: found.email, name: found.name } });
+}));
+
+app.post('/api/auth/logout', wrap(async (req, res) => {
+  const token = bearerToken(req);
+  if (token) await endSession(token);
+  res.sendStatus(204);
+}));
+
+app.get('/api/auth/me', requireUser, (_req, res) => {
+  res.json({ user: currentUser(res) });
+});
+
+app.use('/api/trips', requireUser);
+
 app.post('/api/trips', wrap(async (req, res) => {
+  const user = currentUser(res);
   const title = text(req.body?.title);
-  if (!title) {
-    res.status(400).json({ error: 'title is required' });
+  if (!title || title.length > 120) {
+    res.status(400).json({ error: 'title is required, up to 120 characters' });
     return;
   }
 
@@ -46,37 +140,86 @@ app.post('/api/trips', wrap(async (req, res) => {
     return;
   }
 
-  const requested = text(req.body?.share_code);
-  if (requested && !/^[A-Za-z0-9_-]{4,16}$/.test(requested)) {
-    res.status(400).json({ error: 'share_code must be 4–16 letters, numbers, _ or -' });
-    return;
-  }
-
   for (let attempt = 0; attempt < 3; attempt += 1) {
-    const shareCode = requested || makeShareCode();
+    const client = await pool.connect();
     try {
-      const result = await pool.query(
-        `INSERT INTO trips (title, share_code, budget)
-         VALUES ($1, $2, $3)
-         RETURNING id, title, share_code, budget, created_at`,
-        [title, shareCode, budget],
+      await client.query('BEGIN');
+      const result = await client.query(
+        `INSERT INTO trips (title, share_code, budget, owner_id)
+         VALUES ($1, $2, $3, $4)
+         RETURNING id`,
+        [title, makeShareCode(), budget, user.id],
       );
-      res.status(201).json(tripRow(result.rows[0]));
+      const tripId: string = result.rows[0].id;
+      await client.query(
+        `INSERT INTO trip_members (trip_id, user_id, role) VALUES ($1, $2, 'owner')`,
+        [tripId, user.id],
+      );
+      await client.query('COMMIT');
+      res.status(201).json(await findTrip(tripId, user.id));
       return;
     } catch (error) {
-      if (isUniqueViolation(error) && !requested) continue;
-      if (isUniqueViolation(error)) {
-        res.status(409).json({ error: 'share_code is already in use' });
-        return;
-      }
+      await client.query('ROLLBACK');
+      if (isUniqueViolation(error)) continue;
       throw error;
+    } finally {
+      client.release();
     }
   }
 
   res.status(500).json({ error: 'Could not create a share code' });
 }));
 
+app.post('/api/trips/join', wrap(async (req, res) => {
+  const user = currentUser(res);
+  // Share codes are the only way in, so guessing them is limited per account and per caller.
+  if (joinLimited(`user:${user.id}`) || joinLimited(`ip:${req.ip ?? 'unknown'}`)) {
+    res.status(429).json({ error: 'Too many tries. Try again in a minute.' });
+    return;
+  }
+  const code = text(req.body?.share_code)?.toUpperCase();
+  if (!code || !/^[A-Z0-9_-]{4,16}$/.test(code)) {
+    res.status(400).json({ error: 'Enter the share code from your invite' });
+    return;
+  }
+
+  const trip = await pool.query('SELECT id FROM trips WHERE upper(share_code) = $1 AND owner_id IS NOT NULL', [code]);
+  if (trip.rowCount === 0) {
+    res.status(404).json({ error: 'No trip has that share code' });
+    return;
+  }
+  const tripId: string = trip.rows[0].id;
+  await pool.query(
+    `INSERT INTO trip_members (trip_id, user_id) VALUES ($1, $2)
+     ON CONFLICT (trip_id, user_id) DO NOTHING`,
+    [tripId, user.id],
+  );
+  res.json(await findTrip(tripId, user.id));
+}));
+
+/** The owner deletes the trip for everyone. Anyone else just leaves it. */
+app.delete('/api/trips/:id', wrap(async (req, res) => {
+  const user = currentUser(res);
+  const tripId = req.params.id;
+  if (!isUuid(tripId)) {
+    res.status(400).json({ error: 'trip id must be a uuid' });
+    return;
+  }
+  const role = await memberRole(tripId, user.id);
+  if (!role) {
+    res.status(404).json({ error: 'Trip not found' });
+    return;
+  }
+  if (role === 'owner') {
+    await pool.query('DELETE FROM trips WHERE id = $1 AND owner_id = $2', [tripId, user.id]);
+  } else {
+    await pool.query('DELETE FROM trip_members WHERE trip_id = $1 AND user_id = $2', [tripId, user.id]);
+  }
+  res.sendStatus(204);
+}));
+
 app.post('/api/trips/:id/waypoints', wrap(async (req, res) => {
+  const user = currentUser(res);
   const tripId = req.params.id;
   if (!isUuid(tripId)) {
     res.status(400).json({ error: 'trip id must be a uuid' });
@@ -112,7 +255,10 @@ app.post('/api/trips/:id/waypoints', wrap(async (req, res) => {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-    const trip = await client.query('SELECT id FROM trips WHERE id = $1', [tripId]);
+    const trip = await client.query(
+      'SELECT trip_id FROM trip_members WHERE trip_id = $1 AND user_id = $2 FOR SHARE',
+      [tripId, user.id],
+    );
     if (trip.rowCount === 0) {
       await client.query('ROLLBACK');
       res.status(404).json({ error: 'Trip not found' });
@@ -148,9 +294,7 @@ app.post('/api/trips/:id/waypoints', wrap(async (req, res) => {
 }));
 
 app.get('/api/trips', wrap(async (_req, res) => {
-  const result = await pool.query(
-    'SELECT id, title, share_code, budget, created_at FROM trips ORDER BY created_at DESC',
-  );
+  const result = await pool.query(`${TRIP_SELECT} ORDER BY t.created_at DESC`, [currentUser(res).id]);
   res.json(result.rows.map(tripRow));
 }));
 
@@ -161,11 +305,9 @@ app.get('/api/trips/:id', wrap(async (req, res) => {
     return;
   }
 
-  const trip = await pool.query(
-    'SELECT id, title, share_code, budget, created_at FROM trips WHERE id = $1',
-    [tripId],
-  );
-  if (trip.rowCount === 0) {
+  // Trips you are not on answer 404, the same as trips that do not exist.
+  const trip = await findTrip(tripId, currentUser(res).id);
+  if (!trip) {
     res.status(404).json({ error: 'Trip not found' });
     return;
   }
@@ -186,7 +328,7 @@ app.get('/api/trips/:id', wrap(async (req, res) => {
   );
 
   res.json({
-    ...tripRow(trip.rows[0]),
+    ...trip,
     waypoints: waypoints.rows.map(waypointRow),
     expenses: expenses.rows.map(expenseRow),
   });
@@ -230,17 +372,17 @@ app.post('/api/trips/:id/expenses', wrap(async (req, res) => {
     return;
   }
 
-  const trip = await pool.query('SELECT id FROM trips WHERE id = $1', [tripId]);
-  if (trip.rowCount === 0) {
+  const user = currentUser(res);
+  if (!(await memberRole(tripId, user.id))) {
     res.status(404).json({ error: 'Trip not found' });
     return;
   }
 
   const inserted = await pool.query(
-    `INSERT INTO expenses (trip_id, paid_by_user, amount, category, title, description, photos)
-     VALUES ($1, $2, $3, $4, $5, $6, $7)
+    `INSERT INTO expenses (trip_id, paid_by_user, amount, category, title, description, photos, created_by)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
      RETURNING id, trip_id, paid_by_user, amount, category, title, description, photos`,
-    [tripId, paidByUser, amount, category, title, description, photos],
+    [tripId, paidByUser, amount, category, title, description, photos, user.id],
   );
   res.status(201).json(expenseRow(inserted.rows[0]));
 }));
@@ -262,7 +404,7 @@ function coordinate(latitude: unknown, longitude: unknown): RoutePoint | null {
   return { latitude: lat, longitude: lon };
 }
 
-app.get('/api/geo/autocomplete', wrap(async (req, res) => {
+app.get('/api/geo/autocomplete', requireUser, wrap(async (req, res) => {
   const query = text(req.query.text);
   if (!query || query.length < 3) {
     res.status(400).json({ error: 'text must be at least 3 characters' });
@@ -278,7 +420,7 @@ app.get('/api/geo/autocomplete', wrap(async (req, res) => {
     res.status(503).json({ error: 'Address search is not set up. Add GEOAPIFY_API_KEY to server/.env and restart the server.' });
     return;
   }
-  if (addressSearchLimited(req.ip ?? 'unknown')) {
+  if (addressSearchLimited(currentUser(res).id)) {
     res.status(429).json({ error: 'Too many address searches. Try again in a minute.' });
     return;
   }
@@ -295,7 +437,7 @@ app.get('/api/geo/autocomplete', wrap(async (req, res) => {
   }
 }));
 
-app.get('/api/geo/places', wrap(async (req, res) => {
+app.get('/api/geo/places', requireUser, wrap(async (req, res) => {
   const category = text(req.query.category) ?? '';
   const near = coordinate(req.query.lat, req.query.lon);
   if (!isPlaceCategory(category) || !near) {
@@ -308,7 +450,7 @@ app.get('/api/geo/places', wrap(async (req, res) => {
     res.status(503).json({ error: GEO_NOT_SET_UP });
     return;
   }
-  if (placesLimited(req.ip ?? 'unknown')) {
+  if (placesLimited(currentUser(res).id)) {
     res.status(429).json({ error: 'Too many searches. Try again in a minute.' });
     return;
   }
@@ -321,7 +463,7 @@ app.get('/api/geo/places', wrap(async (req, res) => {
   }
 }));
 
-app.post('/api/geo/route', wrap(async (req, res) => {
+app.post('/api/geo/route', requireUser, wrap(async (req, res) => {
   const raw: unknown = req.body?.points;
   if (!Array.isArray(raw) || raw.length < 2 || raw.length > 12) {
     res.status(400).json({ error: 'points must list between 2 and 12 places' });
@@ -340,7 +482,7 @@ app.post('/api/geo/route', wrap(async (req, res) => {
     res.status(503).json({ error: GEO_NOT_SET_UP });
     return;
   }
-  if (routeLimited(req.ip ?? 'unknown')) {
+  if (routeLimited(currentUser(res).id)) {
     res.status(429).json({ error: 'Too many route requests. Try again in a minute.' });
     return;
   }
@@ -457,9 +599,36 @@ function isUniqueViolation(error: unknown) {
 
 function makeShareCode() {
   const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-  const bytes = randomBytes(6);
+  const bytes = randomBytes(8);
   return [...bytes].map((byte) => alphabet[byte % alphabet.length]).join('');
 }
+
+function emailText(value: unknown): string | null {
+  const email = text(value)?.toLowerCase();
+  if (!email || email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return null;
+  return email;
+}
+
+/** Trips the user in $1 is on. Members show only their id and name, never their email. */
+const TRIP_SELECT = `
+  SELECT t.id, t.title, t.share_code, t.budget, t.created_at, me.role,
+    (SELECT json_agg(json_build_object('id', u.id, 'name', u.name, 'role', m.role) ORDER BY m.joined_at)
+     FROM trip_members m JOIN users u ON u.id = m.user_id
+     WHERE m.trip_id = t.id) AS members
+  FROM trips t
+  JOIN trip_members me ON me.trip_id = t.id AND me.user_id = $1`;
+
+async function findTrip(tripId: string, userId: string) {
+  const result = await pool.query(`${TRIP_SELECT} WHERE t.id = $2`, [userId, tripId]);
+  return result.rowCount === 0 ? null : tripRow(result.rows[0]);
+}
+
+async function memberRole(tripId: string, userId: string): Promise<'owner' | 'member' | null> {
+  const result = await pool.query('SELECT role FROM trip_members WHERE trip_id = $1 AND user_id = $2', [tripId, userId]);
+  return result.rows[0]?.role ?? null;
+}
+
+type Member = { id: string; name: string; role: 'owner' | 'member' };
 
 function tripRow(row: {
   id: string;
@@ -467,6 +636,8 @@ function tripRow(row: {
   share_code: string;
   budget: number | string | null;
   created_at: Date | string;
+  role: 'owner' | 'member';
+  members: Member[] | null;
 }) {
   return {
     id: row.id,
@@ -474,6 +645,8 @@ function tripRow(row: {
     share_code: row.share_code,
     budget: Number(row.budget),
     created_at: new Date(row.created_at).toISOString(),
+    role: row.role,
+    members: row.members ?? [],
   };
 }
 

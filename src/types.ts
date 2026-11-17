@@ -63,6 +63,8 @@ export interface RestStop {
 export interface Trip {
   id: string;
   shareCode?: string;
+  /** Your role on the trip. The owner deletes it for everyone; a member only leaves it. */
+  role?: 'owner' | 'member';
   title: string;
   routeName: string;
   dates: string;

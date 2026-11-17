@@ -7,14 +7,20 @@ import { ProfileMark } from '../components/ProfileMark';
 import { C } from '../theme';
 
 export function ProfileDialog({
+  name,
+  email,
   uri,
   onPhoto,
   onClear,
+  onSignOut,
   onClose,
 }: {
+  name: string;
+  email: string;
   uri: string | null;
   onPhoto: (uri: string) => void;
   onClear: () => void;
+  onSignOut: () => void;
   onClose: () => void;
 }) {
   const [note, setNote] = useState<string | null>(null);
@@ -47,11 +53,14 @@ export function ProfileDialog({
       <Text style={dialogStyles.sub}>Starts as an anonymous picture. Choose a photo to replace it.</Text>
       <View style={styles.preview}>
         <ProfileMark uri={uri} size={72} />
+        <Text style={styles.name}>{name}</Text>
+        <Text style={styles.email}>{email}</Text>
       </View>
       {note ? <Text style={styles.note}>{note}</Text> : null}
       <View style={dialogStyles.actions}>
         <PrimaryButton label={busy ? 'Opening…' : 'Choose a photo'} onPress={choosePhoto} disabled={busy} />
         {uri ? <QuietButton label="Use anonymous picture" onPress={onClear} /> : null}
+        <QuietButton label="Sign out" onPress={onSignOut} />
         <QuietButton label="Done" onPress={onClose} />
       </View>
     </Dialog>
@@ -62,6 +71,17 @@ const styles = StyleSheet.create({
   preview: {
     alignItems: 'center',
     marginTop: 18,
+  },
+  name: {
+    marginTop: 10,
+    fontSize: 17,
+    fontWeight: '700',
+    color: C.ink,
+  },
+  email: {
+    marginTop: 2,
+    fontSize: 13,
+    color: C.muted,
   },
   note: {
     marginTop: 12,

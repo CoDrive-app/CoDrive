@@ -1,11 +1,29 @@
-import { useEffect, useState } from 'react';
-import { BackHandler, Platform, StyleSheet, Text, View } from 'react-native';
+import { useCallback, useEffect, useState } from 'react';
+import { ActivityIndicator, BackHandler, Platform, StyleSheet, Text, View } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
-import { createTrip, getTrip, isServerTrip, listTrips, logExpense, type AddressSuggestion, type ApiExpense, type ApiTrip, type Spot } from './src/api';
+import {
+  createTrip,
+  currentUser,
+  getTrip,
+  isServerTrip,
+  joinTrip,
+  listTrips,
+  logExpense,
+  onSessionEnded,
+  removeTrip,
+  setAuthToken,
+  signOut,
+  type AddressSuggestion,
+  type ApiExpense,
+  type ApiMember,
+  type ApiTrip,
+  type ApiUser,
+  type Spot,
+} from './src/api';
 import { MapBackdrop } from './src/components/MapBackdrop';
 import { TabBar } from './src/components/TabBar';
-import { CREW, IMG, TRIPS } from './src/data';
+import { IMG } from './src/data';
 import { formatIso, formatTripDates } from './src/dates';
 import { currentDrivers, formatLimit } from './src/drivers';
 import { EXPENSE_TYPES, orderPayers, payerOptions, togglePayer } from './src/expenses';
@@ -14,13 +32,16 @@ import { CostsScreen } from './src/screens/CostsScreen';
 import { CreateTripDialog } from './src/screens/CreateTripDialog';
 import { DriveScreen } from './src/screens/DriveScreen';
 import { HomeScreen } from './src/screens/HomeScreen';
+import { AuthScreen } from './src/screens/AuthScreen';
 import { InviteScreen } from './src/screens/InviteScreen';
+import { JoinTripDialog } from './src/screens/JoinTripDialog';
 import { LogExpenseDialog } from './src/screens/LogExpenseDialog';
 import { PlanScreen } from './src/screens/PlanScreen';
 import { ProfileDialog } from './src/screens/ProfileDialog';
 import { RotationDialog } from './src/screens/RotationDialog';
 import { StopNoteDialog } from './src/screens/StopNoteDialog';
 import { TripSettingsScreen, type TripSettings } from './src/screens/TripSettingsScreen';
+import { clearToken, loadToken, saveToken } from './src/session';
 import { applyEndpoints, spotFor, where } from './src/stops';
 import { C } from './src/theme';
 import { castVote } from './src/votes';
@@ -35,12 +56,24 @@ function expenseFromApi(row: ApiExpense): Expense {
   return {
     id: row.id,
     title: row.title || row.category,
-    paidBy: paidBy.length > 0 ? paidBy : ['You'],
+    paidBy: paidBy.length > 0 ? paidBy : ['Someone'],
     notes: row.description,
     amount: row.amount,
     type,
     photos: row.photos,
   };
+}
+
+const CREW_COLORS = ['#E26D5A', '#3AA99A', '#E2B045', '#5B7CFA', '#8B6CC4'];
+
+/** A trip's crew is the accounts on it, in the order they joined. */
+function crewFromMembers(members: ApiMember[]): Crew[] {
+  return members.map((member, index) => ({
+    id: member.id,
+    name: member.name,
+    initial: member.name.trim().charAt(0).toUpperCase() || '?',
+    color: CREW_COLORS[index % CREW_COLORS.length],
+  }));
 }
 
 function tripFromApi(row: ApiTrip): Trip {
@@ -51,11 +84,12 @@ function tripFromApi(row: ApiTrip): Trip {
   return {
     id: row.id,
     shareCode: row.share_code,
+    role: row.role,
     title: row.title,
     routeName: row.title,
     dates,
     image: IMG.road,
-    crew: [{ id: 'you', name: 'You', initial: 'Y', color: '#E26D5A' }],
+    crew: crewFromMembers(row.members),
     waypoints: [],
     expenses: [],
     budget: Number(row.budget) > 0 ? Number(row.budget) : 0,
@@ -66,14 +100,20 @@ function tripFromApi(row: ApiTrip): Trip {
   };
 }
 
-function CoDrive() {
+function CoDrive({ user, onSignOut }: { user: ApiUser; onSignOut: () => void }) {
   const insets = useSafeAreaInsets();
   const [tab, setTab] = useState<Tab>('home');
   // Set when something sends you to a field on the Trip tab, so it can scroll there and focus it.
   const [settingsFocus, setSettingsFocus] = useState<'budget' | null>(null);
-  const [trips, setTrips] = useState<Trip[]>(TRIPS);
-  const [selectedId, setSelectedId] = useState(TRIPS[0].id);
+  const [trips, setTrips] = useState<Trip[]>([]);
+  const [tripsLoading, setTripsLoading] = useState(true);
+  const [tripsError, setTripsError] = useState<string | null>(null);
+  const [selectedId, setSelectedId] = useState('');
   const [createOpen, setCreateOpen] = useState(false);
+  const [joinOpen, setJoinOpen] = useState(false);
+  const [joinCode, setJoinCode] = useState('');
+  const [joining, setJoining] = useState(false);
+  const [joinError, setJoinError] = useState<string | null>(null);
   const [inviteOpen, setInviteOpen] = useState(false);
   const [expenseOpen, setExpenseOpen] = useState(false);
   const [rotationOpen, setRotationOpen] = useState(false);
@@ -107,13 +147,15 @@ function CoDrive() {
     listTrips()
       .then((rows) => {
         if (!active) return;
-        setTrips((current) => {
-          const known = new Set(current.map((item) => item.id));
-          const saved = rows.filter((row) => !known.has(row.id)).map(tripFromApi);
-          return saved.length > 0 ? [...saved, ...current] : current;
-        });
+        setTrips(rows.map(tripFromApi));
+        setSelectedId((current) => current || rows[0]?.id || '');
       })
-      .catch(() => undefined);
+      .catch((error: unknown) => {
+        if (active) setTripsError(error instanceof Error ? error.message : 'Could not load your trips');
+      })
+      .finally(() => {
+        if (active) setTripsLoading(false);
+      });
     return () => {
       active = false;
     };
@@ -127,7 +169,11 @@ function CoDrive() {
       .then((saved) => {
         if (!active) return;
         setTrips((current) =>
-          current.map((item) => (item.id === tripId ? { ...item, expenses: saved.expenses.map(expenseFromApi) } : item)),
+          current.map((item) =>
+            item.id === tripId
+              ? { ...item, crew: crewFromMembers(saved.members), expenses: saved.expenses.map(expenseFromApi) }
+              : item,
+          ),
         );
       })
       .catch(() => undefined);
@@ -158,6 +204,10 @@ function CoDrive() {
         setCreateOpen(false);
         return true;
       }
+      if (joinOpen) {
+        setJoinOpen(false);
+        return true;
+      }
       if (expenseOpen) {
         setExpenseOpen(false);
         return true;
@@ -173,7 +223,7 @@ function CoDrive() {
       return false;
     });
     return () => sub.remove();
-  }, [noteOpen, inviteOpen, rotationOpen, connectionOpen, createOpen, expenseOpen, profileOpen, tab]);
+  }, [noteOpen, inviteOpen, rotationOpen, connectionOpen, createOpen, joinOpen, expenseOpen, profileOpen, tab]);
 
   const updateTrip = (id: string, recipe: (current: Trip) => Trip) => {
     setTrips((current) => current.map((item) => (item.id === id ? recipe(item) : item)));
@@ -184,12 +234,39 @@ function CoDrive() {
     setTab('plan');
   };
 
-  const deleteTrip = (id: string) => {
-    const remaining = trips.filter((item) => item.id !== id);
-    setTrips(remaining);
-    if (selectedId === id) {
-      setSelectedId(remaining[0]?.id ?? '');
-      setTab('home');
+  /** Deletes a trip you own for the whole crew, or leaves one you joined. */
+  const deleteTrip = async (id: string) => {
+    try {
+      await removeTrip(id);
+    } catch (error) {
+      setTripsError(error instanceof Error ? error.message : 'Could not remove the trip');
+      return;
+    }
+    setTripsError(null);
+    setTrips((current) => current.filter((item) => item.id !== id));
+    if (selectedId === id) setSelectedId(trips.find((item) => item.id !== id)?.id ?? '');
+  };
+
+  const openJoin = () => {
+    setJoinCode('');
+    setJoinError(null);
+    setJoinOpen(true);
+  };
+
+  const handleJoin = async () => {
+    const code = joinCode.trim();
+    if (code.length < 4 || joining) return;
+    setJoining(true);
+    setJoinError(null);
+    try {
+      const joined = tripFromApi(await joinTrip(code));
+      setTrips((current) => (current.some((item) => item.id === joined.id) ? current : [joined, ...current]));
+      setJoinOpen(false);
+      openTrip(joined.id);
+    } catch (error) {
+      setJoinError(error instanceof Error ? error.message : 'Could not join the trip');
+    } finally {
+      setJoining(false);
     }
   };
 
@@ -228,7 +305,7 @@ function CoDrive() {
 
     setCreating(true);
     setCreateError(null);
-    let created: { id: string; share_code: string };
+    let created: ApiTrip;
     try {
       created = await createTrip(title);
     } catch (error) {
@@ -238,23 +315,7 @@ function CoDrive() {
     }
 
     const id = created.id;
-    const you: Crew = { id: 'you', name: 'You', initial: 'Y', color: '#E26D5A' };
-    const next: Trip = {
-      id,
-      shareCode: created.share_code,
-      title,
-      routeName: title,
-      dates: 'Dates TBD',
-      image: IMG.road,
-      crew: [you, CREW[1], CREW[2]],
-      budget: 0,
-      drivers: [],
-      duration: '—',
-      leg: 'Add a start and end on the Trip tab',
-      rest: { place: 'Nearest safe pull-off', distance: '—', note: 'We’ll mark it once you’re moving' },
-      expenses: [],
-      waypoints: [],
-    };
+    const next: Trip = { ...tripFromApi(created), dates: 'Dates TBD', leg: 'Add a start and end on the Trip tab' };
     setTrips((current) => [next, ...current]);
     setSelectedId(id);
     setTripName('');
@@ -320,7 +381,7 @@ function CoDrive() {
           title,
           detail: 'Suggested stop',
           note: note || undefined,
-          proposedBy: 'You',
+          proposedBy: user.name,
           likes: 0,
           dislikes: 0,
           vote: null,
@@ -401,9 +462,10 @@ function CoDrive() {
   };
 
   const firstDriver = trip ? currentDrivers(trip)[0] : undefined;
-  const driver = firstDriver?.member.name ?? trip?.crew[0]?.name ?? 'Ava';
+  const driverMember = firstDriver?.member ?? trip?.crew[0];
+  const driver = driverMember?.name ?? 'Your driver';
   const driverLine =
-    driver === 'You'
+    driverMember?.id === user.id
       ? 'You have reached the group set drive limit of '
       : `${driver} has reached the group set drive limit of `;
 
@@ -420,9 +482,12 @@ function CoDrive() {
                 profileUri={profileUri}
                 onOpen={openTrip}
                 onCreate={openCreate}
+                onJoin={openJoin}
                 onDelete={deleteTrip}
                 onEdit={openEdit}
                 onProfile={() => setProfileOpen(true)}
+                loading={tripsLoading}
+                loadError={tripsError}
               />
             ) : null}
             {!trip && tab !== 'home' ? (
@@ -484,6 +549,17 @@ function CoDrive() {
           />
         ) : null}
 
+        {joinOpen ? (
+          <JoinTripDialog
+            code={joinCode}
+            onCode={setJoinCode}
+            onSubmit={handleJoin}
+            onClose={() => setJoinOpen(false)}
+            submitting={joining}
+            error={joinError}
+          />
+        ) : null}
+
         {expenseOpen && trip ? (
           <LogExpenseDialog
             tripTitle={trip.title}
@@ -532,9 +608,12 @@ function CoDrive() {
 
         {profileOpen ? (
           <ProfileDialog
+            name={user.name}
+            email={user.email}
             uri={profileUri}
             onPhoto={setProfileUri}
             onClear={() => setProfileUri(null)}
+            onSignOut={onSignOut}
             onClose={() => setProfileOpen(false)}
           />
         ) : null}
@@ -563,10 +642,72 @@ function CoDrive() {
   );
 }
 
+/** Holds the signed-in account. Nothing about trips loads until the API has confirmed who you are. */
+function Session() {
+  const insets = useSafeAreaInsets();
+  const [user, setUser] = useState<ApiUser | null>(null);
+  const [checking, setChecking] = useState(true);
+
+  const endSession = useCallback(() => {
+    setAuthToken(null);
+    setUser(null);
+    clearToken().catch(() => undefined);
+  }, []);
+
+  useEffect(() => {
+    onSessionEnded(endSession);
+    let active = true;
+    loadToken()
+      .then(async (token) => {
+        if (!token) return;
+        setAuthToken(token);
+        const me = await currentUser();
+        if (active) setUser(me.user);
+      })
+      .catch(() => undefined)
+      .finally(() => {
+        if (active) setChecking(false);
+      });
+    return () => {
+      active = false;
+      onSessionEnded(null);
+    };
+  }, [endSession]);
+
+  const signedIn = (token: string, account: ApiUser) => {
+    setAuthToken(token);
+    saveToken(token).catch(() => undefined);
+    setUser(account);
+  };
+
+  const signOutNow = () => {
+    // The request reads the token before endSession clears it.
+    signOut().catch(() => undefined);
+    endSession();
+  };
+
+  if (user) return <CoDrive key={user.id} user={user} onSignOut={signOutNow} />;
+
+  return (
+    <View style={styles.stage}>
+      <View style={[styles.phone, { paddingTop: insets.top, paddingBottom: insets.bottom }]}>
+        <StatusBar style="dark" />
+        {checking ? (
+          <View style={styles.emptyTab}>
+            <ActivityIndicator color={C.teal} />
+          </View>
+        ) : (
+          <AuthScreen onSignedIn={signedIn} />
+        )}
+      </View>
+    </View>
+  );
+}
+
 export default function App() {
   return (
     <SafeAreaProvider>
-      <CoDrive />
+      <Session />
     </SafeAreaProvider>
   );
 }
