@@ -14,7 +14,10 @@
     },
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.example.codrive"
+      "bundleIdentifier": "com.example.codrive",
+      "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false
+      }
     },
     "android": {
       "adaptiveIcon": {
@@ -22,7 +25,10 @@
         "backgroundColor": "#3B82F6"
       },
       "package": "com.example.codrive",
-      "usesCleartextTraffic": true
+      "usesCleartextTraffic": true,
+      "permissions": [
+        "android.permission.RECORD_AUDIO"
+      ]
     },
     "web": {
       "favicon": "./assets/favicon.png"
@@ -34,7 +40,20 @@
           "photosPermission": "CoDrive uses your photos so you can attach receipts and trip pictures.",
           "cameraPermission": "CoDrive uses your camera so you can snap receipts for shared expenses."
         }
-      ]
-    ]
+      ],
+      "expo-secure-store"
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "71324ca5-4a07-4b42-aa88-1aafce7ecc05"
+      }
+    },
+    "owner": "codrive",
+    "runtimeVersion": {
+      "policy": "appVersion"
+    },
+    "updates": {
+      "url": "https://u.expo.dev/71324ca5-4a07-4b42-aa88-1aafce7ecc05"
+    }
   }
 }

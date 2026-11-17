@@ -2,11 +2,15 @@ import Constants from 'expo-constants';
 import { Platform } from 'react-native';
 
 /**
- * Web and the iOS Simulator use http://localhost:3000.
- * The Android emulator uses http://10.0.2.2:3000 when Expo has no LAN host.
- * A physical phone uses http://<this computer's LAN address>:3000 from the Expo packager.
+ * A root `.env` value `EXPO_PUBLIC_API_URL` points Expo at the hosted API.
+ * Leave it unset to keep the local API: web and the iOS Simulator use
+ * http://localhost:3000, the Android emulator uses http://10.0.2.2:3000 when
+ * Expo has no LAN host, and a physical phone uses http://<this computer's LAN address>:3000.
  */
 export function apiBaseUrl(): string {
+  const configured = process.env.EXPO_PUBLIC_API_URL?.trim().replace(/\/$/, '');
+  if (configured) return configured;
+
   const host = packagerHost();
   if (host && Platform.OS !== 'web') {
     return `http://${host}:3000`;
@@ -21,13 +25,55 @@ export function isServerTrip(id: string) {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id);
 }
 
+export type ApiUser = { id: string; email: string; name: string };
+
+export type ApiMember = { id: string; name: string; role: 'owner' | 'member' };
+
 export type ApiTrip = {
   id: string;
   title: string;
   share_code: string;
   budget: number | null;
   created_at: string;
+  /** Your role on this trip. The owner can delete it; members can leave it. */
+  role: 'owner' | 'member';
+  members: ApiMember[];
 };
+
+let authToken: string | null = null;
+let onSignedOut: (() => void) | null = null;
+
+/** Every request after this carries the token. Pass null after signing out. */
+export function setAuthToken(token: string | null) {
+  authToken = token;
+}
+
+/** Called when the API says the session has ended, so the app can go back to sign-in. */
+export function onSessionEnded(handler: (() => void) | null) {
+  onSignedOut = handler;
+}
+
+export function signUp(name: string, email: string, password: string) {
+  return request<{ token: string; user: ApiUser }>('/api/auth/signup', {
+    method: 'POST',
+    body: JSON.stringify({ name, email, password }),
+  });
+}
+
+export function signIn(email: string, password: string) {
+  return request<{ token: string; user: ApiUser }>('/api/auth/login', {
+    method: 'POST',
+    body: JSON.stringify({ email, password }),
+  });
+}
+
+export function signOut() {
+  return request<void>('/api/auth/logout', { method: 'POST' });
+}
+
+export function currentUser() {
+  return request<{ user: ApiUser }>('/api/auth/me');
+}
 
 export type ApiWaypoint = {
   id: string;
@@ -114,6 +160,18 @@ export function createTrip(title: string, budget?: number) {
   });
 }
 
+export function joinTrip(shareCode: string) {
+  return request<ApiTrip>('/api/trips/join', {
+    method: 'POST',
+    body: JSON.stringify({ share_code: shareCode }),
+  });
+}
+
+/** Deletes the trip if you own it, or takes you off it if you joined it. */
+export function removeTrip(id: string) {
+  return request<void>(`/api/trips/${id}`, { method: 'DELETE' });
+}
+
 export function addWaypoint(
   tripId: string,
   stop: { name: string; latitude: number; longitude: number; sequence_order?: number },
@@ -149,6 +207,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
       ...init,
       headers: {
         'Content-Type': 'application/json',
+        ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
         ...(init?.headers ?? {}),
       },
     });
@@ -157,6 +216,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   }
   const data = (await response.json().catch(() => ({}))) as { error?: string };
   if (!response.ok) {
+    if (response.status === 401 && authToken) onSignedOut?.();
     throw new Error(data.error ?? 'Request failed');
   }
   return data as T;

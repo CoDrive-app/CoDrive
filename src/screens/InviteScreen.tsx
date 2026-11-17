@@ -61,7 +61,9 @@ export function InviteScreen({ trip, onDone }: { trip: Trip; onDone: () => void 
         <View style={styles.qrCard}>
           <QrMark />
         </View>
-        <Text style={styles.hint}>Scan this code or share the link to join your trip.</Text>
+        <Text style={styles.hint}>
+          Share the code below. Your crew signs in, taps Join with a Code on Home, and enters it.
+        </Text>
         {trip.shareCode ? (
           <View style={styles.codeBlock}>
             <Text style={styles.codeLabel}>Share code</Text>

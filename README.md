@@ -16,14 +16,15 @@ npm start
 
 ## What you can do
 
-- **Home.** Start a trip with just a name. Open an expedition, tap the pencil to open its Trip tab, or tap the X to delete it. The profile picture starts as an anonymous icon; tap it to choose a photo or switch back.
-- **Invite.** After you create a trip, share a link or QR code, then continue to the Trip tab.
+- **Accounts.** Sign in, or create an account with a name, email and password. You only ever see trips you started or joined. Sign out from the profile picture on Home.
+- **Home.** Start a trip with just a name, or join someone's trip with its share code. Open an expedition, tap the pencil to open its Trip tab, or tap the X to delete it (the owner deletes it for everyone; anyone else just leaves it). The profile picture starts as an anonymous icon; tap it to choose a photo or switch back.
+- **Invite.** After you create a trip, share its code. Friends sign in, tap Join with a Code, and enter it.
 - **Trip.** Set the start and end, dates, budget and picture, and choose which crew members can drive and for how long (1 to 12 hours each). Everything except the name is optional. No route is drawn until both Start and End are filled in. The budget is what Split uses for that trip.
 - **Plan.** Review proposed stops, like one, or suggest a new waypoint.
 - **Drive.** Follow the route and today’s itinerary. With two or more drivers set on the Trip tab, the route is split into one colour per driver, each stretch as long as that driver can drive; a change of colour is a change of driver. If one driver can cover the whole route, or only one driver is set, the line is in that driver's colour. A change within 5 miles of a stop moves to that stop. The steering-wheel control opens the driver-rotation reminder, using the first driver set on the Trip tab. The map shows real streets from Geoapify map tiles. It pans with one finger and zooms with a pinch or the + and - buttons, and the target button jumps to your location (or back to the whole route if there is none). Tap a pin to see that stop's time, notes, who suggested it, and its votes. The route line turns translucent once you zoom in far enough for street names to show. The bluetooth control opens the connection-lost notice.
 - **Split.** See the shared budget and log an expense, including notes for who paid and whether it was split.
 
-Sample trips load from `src/data.ts`. Starting a new trip saves it through the API and keeps the returned id and share code for later stops and expenses.
+Trips, crews and expenses come from the API for the signed-in account. Trip settings, suggested stops and votes are still kept on the phone only, so the rest of the crew does not see them yet.
 
 ## Drive screen
 
@@ -47,17 +48,43 @@ For address search, put your Geoapify key in `server/.env` as `GEOAPIFY_API_KEY=
 
 The API listens on [http://localhost:3000](http://localhost:3000). Postgres is published on port 5433 so it does not collide with a Postgres already running on 5432.
 
+Leave `EXPO_PUBLIC_API_URL` unset and the app keeps using that local API. To point Expo at the hosted API, copy `.env.example` to `.env` in the project root, set `EXPO_PUBLIC_API_URL` to the Render URL with no trailing slash, and restart Expo.
+
+## Hosted API
+
+`render.yaml` describes the production API and database. In the Render dashboard, create a Blueprint from this repo. Render asks for `GEOAPIFY_API_KEY` and does not read `server/.env`. The Blueprint sets `TRUST_PROXY=1` so rate limits see each caller's address instead of Render's proxy. The build compiles `server/` and runs `node dist/index.js`. `./start.sh` is unchanged for local work. Open `https://<the service>.onrender.com/health` and expect `{"ok": true}`.
+
+## Accounts and access
+
+Every `/api/trips` endpoint and the paid `/api/geo` lookups (autocomplete, places, route) need `Authorization: Bearer <token>`. Map tiles stay open because the map loads them as plain images; they are cached and limited per caller.
+
+- Passwords are hashed with scrypt. The API stores only a SHA-256 of each sign-in token, and tokens last 60 days or until sign-out.
+- A user sees a trip only while they are on its crew (`trip_members`). A trip you are not on answers 404, the same as one that does not exist.
+- Joining needs the trip's 8-character share code and is limited to 10 tries a minute. Sign-in is limited per caller and per email.
+- Other crew members see your name, never your email.
+- Trips made before accounts existed have no owner, so nobody can see them.
+
 Tables:
 
-- `trips` — `id`, `title`, `share_code`, `budget`, `created_at`
+- `users` — `id`, `email` (unique, any case), `name`, `password_hash`, `created_at`
+- `sessions` — `token_hash`, `user_id`, `created_at`, `expires_at`
+- `trip_members` — `trip_id`, `user_id`, `role` (`owner` or `member`), `joined_at`
+- `trips` — `id`, `title`, `share_code`, `budget`, `owner_id`, `created_at`
 - `waypoints` — `id`, `trip_id`, `name`, `latitude`, `longitude`, `sequence_order`, plus a PostGIS `location` point filled from the coordinates
-- `expenses` — `id`, `trip_id`, `paid_by_user`, `amount`, `category`, `description`
+- `expenses` — `id`, `trip_id`, `paid_by_user`, `amount`, `category`, `title`, `description`, `photos`, `created_by`
 
 Endpoints:
 
-- `POST /api/trips` — body `{ "title": "North Shore Getaway", "budget": 500 }`. `share_code` and `budget` are optional. If given, `budget` must be greater than 0.
+- `POST /api/auth/signup` — body `{ "name": "Ava", "email": "ava@example.com", "password": "at least 8 characters" }`. Returns `{ token, user }`.
+- `POST /api/auth/login` — body `{ "email", "password" }`. Returns `{ token, user }`.
+- `POST /api/auth/logout` — ends the session for the token sent.
+- `GET /api/auth/me` — the signed-in user.
+- `GET /api/trips` — the trips you are on, each with your `role` and its `members`.
+- `POST /api/trips` — body `{ "title": "North Shore Getaway", "budget": 500 }`. `budget` is optional and must be greater than 0. You become the owner and the API picks the share code.
+- `POST /api/trips/join` — body `{ "share_code": "N7XUAUT2" }`. Adds you to that trip's crew.
+- `DELETE /api/trips/:id` — the owner deletes the trip; a member leaves it.
 - `POST /api/trips/:id/waypoints` — body `{ "name": "Pipeline Beach", "latitude": 21.665, "longitude": -158.053 }`. `sequence_order` is optional and defaults to the next stop.
-- `GET /api/trips/:id` — the trip, its stops in order, and its expenses.
+- `GET /api/trips/:id` — the trip, its members, its stops in order, and its expenses.
 - `GET /api/geo/autocomplete?text=Ala Moana` — up to 5 address suggestions with coordinates, looked up through Geoapify. Needs `GEOAPIFY_API_KEY`. `text` must be 3 to 200 characters, and each caller is limited to 60 searches a minute.
 - `GET /api/geo/places?category=food|gas|beach|sights|lodging&lat=...&lon=...` — named places of that kind within about 9 miles of a point.
 - `GET /api/geo/tile/osm-bright/:z/:x/:y` — one high-resolution map tile as a PNG. The API keeps recently used tiles in memory, up to 64 MB, and only tiles it has to fetch count toward Geoapify credits and the limit of 600 a minute per caller.
@@ -68,4 +95,4 @@ All `/api/geo` endpoints use the Geoapify key in `server/.env`, and each has its
 
 ## Where things live
 
-`App.tsx` holds navigation and screen state. Screens are in `src/screens/`, shared pieces in `src/components/`, map maths in `src/mapView.ts`, and colors in `src/theme.ts`. The schema is `server/sql/001_schema.sql`.
+`App.tsx` holds navigation and screen state. Screens are in `src/screens/`, shared pieces in `src/components/`, map maths in `src/mapView.ts`, and colors in `src/theme.ts`. The schema is in `server/sql/`; the API runs every file there in order on start. Sign-in and sessions are in `server/src/auth.ts`, and the app keeps its token in `src/session.ts`.

@@ -1,0 +1,28 @@
+# Render Blueprint for the API and its database.
+# Local development still uses docker compose and `npm start` in server/.
+databases:
+  - name: codrive-db
+    databaseName: codrive
+    user: codrive
+    plan: free
+    postgresMajorVersion: "16"
+
+services:
+  - type: web
+    name: codrive-api
+    runtime: node
+    plan: free
+    rootDir: server
+    buildCommand: npm install --include=dev && npm run build
+    startCommand: npm run start:prod
+    healthCheckPath: /health
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: codrive-db
+          property: connectionString
+      - key: GEOAPIFY_API_KEY
+        sync: false
+      # Render's proxy forwards the caller's address; rate limits need it.
+      - key: TRUST_PROXY
+        value: "1"

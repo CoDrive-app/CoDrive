@@ -12,6 +12,7 @@ export function Field({
   maxLength,
   onSubmitEditing,
   autoFocus,
+  kind,
 }: {
   label: string;
   value: string;
@@ -23,7 +24,18 @@ export function Field({
   maxLength?: number;
   onSubmitEditing?: () => void;
   autoFocus?: boolean;
+  /** Sign-in fields: no autocorrect or capitals, the email keyboard, and hidden password text. */
+  kind?: 'email' | 'password' | 'new-password';
 }) {
+  const account = kind
+    ? {
+        autoCapitalize: 'none' as const,
+        autoCorrect: false,
+        secureTextEntry: kind !== 'email',
+        autoComplete: kind === 'email' ? ('email' as const) : kind === 'password' ? ('current-password' as const) : ('new-password' as const),
+        textContentType: kind === 'email' ? ('emailAddress' as const) : kind === 'password' ? ('password' as const) : ('newPassword' as const),
+      }
+    : {};
   return (
     <View style={styles.wrap}>
       <Text style={styles.label}>{label}</Text>
@@ -32,8 +44,9 @@ export function Field({
         onChangeText={numeric ? (text: string) => onChangeText(sanitizeDecimal(text)) : onChangeText}
         placeholder={placeholder}
         placeholderTextColor={C.faint}
-        keyboardType={numeric ? 'decimal-pad' : 'default'}
-        inputMode={numeric ? 'decimal' : undefined}
+        keyboardType={numeric ? 'decimal-pad' : kind === 'email' ? 'email-address' : 'default'}
+        inputMode={numeric ? 'decimal' : kind === 'email' ? 'email' : undefined}
+        {...account}
         multiline={multiline}
         maxLength={maxLength}
         onSubmitEditing={onSubmitEditing}

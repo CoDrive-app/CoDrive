@@ -16,3 +16,4 @@ local.properties
 node_modules
 .expo/
 .env
+server/dist
