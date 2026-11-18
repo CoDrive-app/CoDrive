@@ -34,7 +34,7 @@ app.use((req, res, next) => {
   // Sign-in uses a bearer token, not cookies, so allowing any origin does not expose other users' data.
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
-  res.setHeader('Access-Control-Allow-Methods', 'GET,POST,DELETE,OPTIONS');
+  res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PATCH,PUT,DELETE,OPTIONS');
   if (req.method === 'OPTIONS') {
     res.sendStatus(204);
     return;
@@ -226,19 +226,15 @@ app.post('/api/trips/:id/waypoints', wrap(async (req, res) => {
     return;
   }
 
-  const name = text(req.body?.name);
-  const latitude = number(req.body?.latitude);
-  const longitude = number(req.body?.longitude);
-  if (!name) {
-    res.status(400).json({ error: 'name is required' });
+  // The location is optional: a stop typed without picking a suggestion has none yet.
+  const stop = place(req.body);
+  if (!stop) {
+    res.status(400).json({ error: 'name is required, with a valid latitude and longitude if given' });
     return;
   }
-  if (latitude === null || latitude < -90 || latitude > 90) {
-    res.status(400).json({ error: 'latitude must be between -90 and 90' });
-    return;
-  }
-  if (longitude === null || longitude < -180 || longitude > 180) {
-    res.status(400).json({ error: 'longitude must be between -180 and 180' });
+  const note = descriptionText(req.body?.note);
+  if (note === null || note.length > 500) {
+    res.status(400).json({ error: 'note must be text up to 500 characters' });
     return;
   }
 
@@ -274,13 +270,14 @@ app.post('/api/trips/:id/waypoints', wrap(async (req, res) => {
     }
 
     const inserted = await client.query(
-      `INSERT INTO waypoints (trip_id, name, latitude, longitude, sequence_order)
-       VALUES ($1, $2, $3, $4, $5)
-       RETURNING id, trip_id, name, latitude, longitude, sequence_order`,
-      [tripId, name, latitude, longitude, sequenceOrder],
+      `INSERT INTO waypoints (trip_id, name, latitude, longitude, sequence_order, note, proposed_by)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
+       RETURNING id`,
+      [tripId, stop.name, stop.latitude, stop.longitude, sequenceOrder, note, user.id],
     );
     await client.query('COMMIT');
-    res.status(201).json(waypointRow(inserted.rows[0]));
+    const [saved] = await findWaypoints(pool, tripId, user.id, inserted.rows[0].id);
+    res.status(201).json(saved);
   } catch (error) {
     await client.query('ROLLBACK');
     if (isUniqueViolation(error)) {
@@ -306,32 +303,155 @@ app.get('/api/trips/:id', wrap(async (req, res) => {
   }
 
   // Trips you are not on answer 404, the same as trips that do not exist.
-  const trip = await findTrip(tripId, currentUser(res).id);
+  const trip = await tripDetail(tripId, currentUser(res).id);
   if (!trip) {
     res.status(404).json({ error: 'Trip not found' });
     return;
   }
+  res.json(trip);
+}));
 
-  const waypoints = await pool.query(
-    `SELECT id, trip_id, name, latitude, longitude, sequence_order
-     FROM waypoints
-     WHERE trip_id = $1
-     ORDER BY sequence_order`,
-    [tripId],
-  );
-  const expenses = await pool.query(
-    `SELECT id, trip_id, paid_by_user, amount, category, title, description, photos
-     FROM expenses
-     WHERE trip_id = $1
-     ORDER BY created_at DESC`,
-    [tripId],
-  );
+/**
+ * Saves the Trip tab. Every field is optional and only the ones sent change.
+ * `start` and `end` are `{ name, latitude?, longitude? }`, or null to remove that stop.
+ */
+app.patch('/api/trips/:id', wrap(async (req, res) => {
+  const user = currentUser(res);
+  const tripId = req.params.id;
+  if (!isUuid(tripId)) {
+    res.status(400).json({ error: 'trip id must be a uuid' });
+    return;
+  }
+  const body = (req.body ?? {}) as Record<string, unknown>;
+  const sets: string[] = [];
+  const values: unknown[] = [];
+  const set = (column: string, value: unknown) => {
+    values.push(value);
+    sets.push(`${column} = $${values.length + 1}`);
+  };
+  const fail = (error: string) => {
+    res.status(400).json({ error });
+  };
 
-  res.json({
-    ...trip,
-    waypoints: waypoints.rows.map(waypointRow),
-    expenses: expenses.rows.map(expenseRow),
-  });
+  if (body.title !== undefined) {
+    const title = text(body.title);
+    if (!title || title.length > 120) return fail('title is required, up to 120 characters');
+    set('title', title);
+  }
+  if (body.budget !== undefined) {
+    const budget = body.budget === null ? null : number(body.budget);
+    if (body.budget !== null && (budget === null || budget <= 0)) return fail('budget must be greater than 0');
+    set('budget', budget);
+  }
+  const startDate = body.start_date === undefined ? undefined : isoDate(body.start_date);
+  const endDate = body.end_date === undefined ? undefined : isoDate(body.end_date);
+  if (body.start_date !== undefined && startDate === undefined) return fail('start_date must be YYYY-MM-DD');
+  if (body.end_date !== undefined && endDate === undefined) return fail('end_date must be YYYY-MM-DD');
+  if (startDate && endDate && endDate < startDate) return fail('end_date cannot be before start_date');
+  if (startDate !== undefined) set('start_date', startDate);
+  if (endDate !== undefined) set('end_date', endDate);
+  if (body.image !== undefined) {
+    const image = tripImage(body.image);
+    if (image === undefined) return fail('image must be an https URL or an image under 3 MB');
+    set('image', image);
+  }
+  if (body.drivers !== undefined) {
+    const drivers = driverList(body.drivers);
+    if (!drivers) return fail('drivers must list crew ids with limits from 60 to 720 minutes');
+    set('drivers', JSON.stringify(drivers));
+  }
+  if (body.guests !== undefined) {
+    const guests = guestList(body.guests);
+    if (!guests) return fail(`guests must list up to ${MAX_CREW} names`);
+    set('guests', JSON.stringify(guests));
+  }
+  const endpoints: { role: 'start' | 'end'; stop: Place | null }[] = [];
+  for (const role of ['start', 'end'] as const) {
+    if (body[role] === undefined) continue;
+    const stop = body[role] === null ? null : place(body[role]);
+    if (stop === undefined) return fail(`${role} needs a name, with a valid latitude and longitude if given`);
+    endpoints.push({ role, stop });
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const member = await client.query(
+      'SELECT trip_id FROM trip_members WHERE trip_id = $1 AND user_id = $2',
+      [tripId, user.id],
+    );
+    if (member.rowCount === 0) {
+      await client.query('ROLLBACK');
+      res.status(404).json({ error: 'Trip not found' });
+      return;
+    }
+    // Locks the trip so two saves cannot both add a Start or pick the same stop order.
+    await client.query('SELECT id FROM trips WHERE id = $1 FOR UPDATE', [tripId]);
+    if (sets.length > 0) {
+      await client.query(`UPDATE trips SET ${sets.join(', ')} WHERE id = $1`, [tripId, ...values]);
+    }
+    for (const { role, stop } of endpoints) {
+      if (!stop) {
+        await client.query('DELETE FROM waypoints WHERE trip_id = $1 AND role = $2', [tripId, role]);
+        continue;
+      }
+      const updated = await client.query(
+        'UPDATE waypoints SET name = $3, latitude = $4, longitude = $5 WHERE trip_id = $1 AND role = $2',
+        [tripId, role, stop.name, stop.latitude, stop.longitude],
+      );
+      if (updated.rowCount === 0) {
+        await client.query(
+          `INSERT INTO waypoints (trip_id, name, latitude, longitude, sequence_order, role, proposed_by)
+           VALUES ($1, $2, $3, $4,
+             (SELECT COALESCE(MAX(sequence_order), -1) + 1 FROM waypoints WHERE trip_id = $1), $5, $6)`,
+          [tripId, stop.name, stop.latitude, stop.longitude, role, user.id],
+        );
+      }
+    }
+    await client.query('COMMIT');
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
+  res.json(await tripDetail(tripId, user.id));
+}));
+
+/** Sets your vote on a stop. `{ "vote": "up" | "down" | null }`; null takes it back. */
+app.put('/api/trips/:id/waypoints/:waypointId/vote', wrap(async (req, res) => {
+  const user = currentUser(res);
+  const { id: tripId, waypointId } = req.params;
+  if (!isUuid(tripId) || !isUuid(waypointId)) {
+    res.status(400).json({ error: 'trip and stop ids must be uuids' });
+    return;
+  }
+  const vote = req.body?.vote;
+  if (vote !== null && vote !== 'up' && vote !== 'down') {
+    res.status(400).json({ error: 'vote must be "up", "down", or null' });
+    return;
+  }
+  const found = await pool.query(
+    `SELECT w.id FROM waypoints w
+     JOIN trip_members m ON m.trip_id = w.trip_id AND m.user_id = $3
+     WHERE w.id = $2 AND w.trip_id = $1`,
+    [tripId, waypointId, user.id],
+  );
+  if (found.rowCount === 0) {
+    res.status(404).json({ error: 'Stop not found' });
+    return;
+  }
+  if (vote === null) {
+    await pool.query('DELETE FROM waypoint_votes WHERE waypoint_id = $1 AND user_id = $2', [waypointId, user.id]);
+  } else {
+    await pool.query(
+      `INSERT INTO waypoint_votes (waypoint_id, user_id, vote) VALUES ($1, $2, $3)
+       ON CONFLICT (waypoint_id, user_id) DO UPDATE SET vote = EXCLUDED.vote`,
+      [waypointId, user.id, vote],
+    );
+  }
+  const [saved] = await findWaypoints(pool, tripId, user.id, waypointId);
+  res.json(saved);
 }));
 
 app.post('/api/trips/:id/expenses', wrap(async (req, res) => {
@@ -612,6 +732,8 @@ function emailText(value: unknown): string | null {
 /** Trips the user in $1 is on. Members show only their id and name, never their email. */
 const TRIP_SELECT = `
   SELECT t.id, t.title, t.share_code, t.budget, t.created_at, me.role,
+    to_char(t.start_date, 'YYYY-MM-DD') AS start_date, to_char(t.end_date, 'YYYY-MM-DD') AS end_date,
+    t.image, t.drivers, t.guests,
     (SELECT json_agg(json_build_object('id', u.id, 'name', u.name, 'role', m.role) ORDER BY m.joined_at)
      FROM trip_members m JOIN users u ON u.id = m.user_id
      WHERE m.trip_id = t.id) AS members
@@ -638,6 +760,11 @@ function tripRow(row: {
   created_at: Date | string;
   role: 'owner' | 'member';
   members: Member[] | null;
+  start_date: string | null;
+  end_date: string | null;
+  image: string | null;
+  drivers: Driver[] | null;
+  guests: Guest[] | null;
 }) {
   return {
     id: row.id,
@@ -647,25 +774,140 @@ function tripRow(row: {
     created_at: new Date(row.created_at).toISOString(),
     role: row.role,
     members: row.members ?? [],
+    start_date: row.start_date,
+    end_date: row.end_date,
+    image: row.image,
+    drivers: row.drivers ?? [],
+    guests: row.guests ?? [],
   };
+}
+
+/** A trip with its stops and expenses, as the user in `userId` sees it. */
+async function tripDetail(tripId: string, userId: string) {
+  const trip = await findTrip(tripId, userId);
+  if (!trip) return null;
+  const expenses = await pool.query(
+    `SELECT id, trip_id, paid_by_user, amount, category, title, description, photos
+     FROM expenses
+     WHERE trip_id = $1
+     ORDER BY created_at DESC`,
+    [tripId],
+  );
+  return {
+    ...trip,
+    waypoints: await findWaypoints(pool, tripId, userId),
+    expenses: expenses.rows.map(expenseRow),
+  };
+}
+
+type Queryable = Pick<typeof pool, 'query'>;
+
+/** A trip's stops in order, with vote counts and the vote of the user in `userId`. */
+async function findWaypoints(db: Queryable, tripId: string, userId: string, waypointId?: string) {
+  const result = await db.query(
+    `SELECT w.id, w.trip_id, w.name, w.latitude, w.longitude, w.sequence_order, w.role, w.note,
+       u.name AS proposed_by,
+       (SELECT count(*) FROM waypoint_votes v WHERE v.waypoint_id = w.id AND v.vote = 'up') AS likes,
+       (SELECT count(*) FROM waypoint_votes v WHERE v.waypoint_id = w.id AND v.vote = 'down') AS dislikes,
+       (SELECT v.vote FROM waypoint_votes v WHERE v.waypoint_id = w.id AND v.user_id = $2) AS my_vote
+     FROM waypoints w
+     LEFT JOIN users u ON u.id = w.proposed_by
+     WHERE w.trip_id = $1 AND ($3::uuid IS NULL OR w.id = $3::uuid)
+     ORDER BY w.sequence_order`,
+    [tripId, userId, waypointId ?? null],
+  );
+  return result.rows.map(waypointRow);
 }
 
 function waypointRow(row: {
   id: string;
   trip_id: string;
   name: string;
-  latitude: number | string;
-  longitude: number | string;
+  latitude: number | string | null;
+  longitude: number | string | null;
   sequence_order: number | string;
+  role: 'start' | 'end' | null;
+  note: string;
+  proposed_by: string | null;
+  likes: number | string;
+  dislikes: number | string;
+  my_vote: 'up' | 'down' | null;
 }) {
   return {
     id: row.id,
     trip_id: row.trip_id,
     name: row.name,
-    latitude: Number(row.latitude),
-    longitude: Number(row.longitude),
+    latitude: row.latitude === null ? null : Number(row.latitude),
+    longitude: row.longitude === null ? null : Number(row.longitude),
     sequence_order: Number(row.sequence_order),
+    role: row.role,
+    note: row.note,
+    proposed_by: row.proposed_by,
+    likes: Number(row.likes),
+    dislikes: Number(row.dislikes),
+    my_vote: row.my_vote,
   };
+}
+
+type Driver = { crewId: string; limitMinutes: number };
+type Guest = { id: string; name: string };
+
+const MAX_CREW = 30;
+
+function driverList(value: unknown): Driver[] | null {
+  if (!Array.isArray(value) || value.length > MAX_CREW) return null;
+  const drivers: Driver[] = [];
+  for (const item of value) {
+    const crewId = text(item?.crewId);
+    const limitMinutes = number(item?.limitMinutes);
+    if (!crewId || crewId.length > 80 || limitMinutes === null || !Number.isInteger(limitMinutes)) return null;
+    if (limitMinutes < 60 || limitMinutes > 720) return null;
+    drivers.push({ crewId, limitMinutes });
+  }
+  return drivers;
+}
+
+function guestList(value: unknown): Guest[] | null {
+  if (!Array.isArray(value) || value.length > MAX_CREW) return null;
+  const guests: Guest[] = [];
+  for (const item of value) {
+    const id = text(item?.id);
+    const name = text(item?.name);
+    if (!id || id.length > 80 || !name || name.length > 60) return null;
+    guests.push({ id, name });
+  }
+  return guests;
+}
+
+const MAX_IMAGE_LENGTH = 3_000_000;
+
+/** The trip picture: an https URL or an image data URL. null goes back to the default. */
+function tripImage(value: unknown): string | null | undefined {
+  if (value === null) return null;
+  if (typeof value !== 'string') return undefined;
+  if (value.startsWith('https://') && value.length <= 2000) return value;
+  if (value.startsWith('data:image/') && value.length <= MAX_IMAGE_LENGTH) return value;
+  return undefined;
+}
+
+function isoDate(value: unknown): string | null | undefined {
+  if (value === null || value === '') return null;
+  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return undefined;
+  const date = new Date(`${value}T00:00:00Z`);
+  return Number.isNaN(date.getTime()) || date.toISOString().slice(0, 10) !== value ? undefined : value;
+}
+
+type Place = { name: string; latitude: number | null; longitude: number | null };
+
+/** A stop's name and optional location. Gives undefined if it is not valid. */
+function place(value: unknown): Place | undefined {
+  const body = value as { name?: unknown; latitude?: unknown; longitude?: unknown } | null;
+  const name = text(body?.name);
+  if (!name || name.length > 200) return undefined;
+  const hasLocation = body?.latitude !== undefined && body?.latitude !== null;
+  if (!hasLocation) return { name, latitude: null, longitude: null };
+  const point = coordinate(body?.latitude, body?.longitude);
+  return point ? { name, ...point } : undefined;
 }
 
 function expenseRow(row: {

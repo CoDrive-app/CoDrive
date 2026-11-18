@@ -11,12 +11,16 @@ export function StopNoteDialog({
   onNote,
   onConfirm,
   onClose,
+  submitting,
+  error,
 }: {
   stopTitle: string;
   note: string;
   onNote: (value: string) => void;
   onConfirm: () => void;
   onClose: () => void;
+  submitting?: boolean;
+  error?: string | null;
 }) {
   return (
     <Dialog onClose={onClose}>
@@ -28,11 +32,17 @@ export function StopNoteDialog({
         onChangeText={onNote}
         placeholder="10 min surf check"
         maxLength={60}
-        onSubmitEditing={onConfirm}
+        onSubmitEditing={submitting ? undefined : onConfirm}
       />
       <Text style={styles.hint}>Shows under the stop name. Leave it blank to skip.</Text>
+      {error ? <Text style={styles.hint}>{error}</Text> : null}
       <View style={dialogStyles.actions}>
-        <PrimaryButton label="Add Stop" onPress={onConfirm} />
+        <PrimaryButton
+          label={submitting ? 'Adding…' : 'Add Stop'}
+          onPress={onConfirm}
+          disabled={submitting}
+          loading={submitting}
+        />
         <QuietButton label="Cancel" onPress={onClose} />
       </View>
     </Dialog>

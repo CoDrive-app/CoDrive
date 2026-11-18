@@ -17,16 +17,12 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 20
-          cache: 'npm' # Change to 'yarn' or 'pnpm' if you don't use npm
-
-      - name: Setup Expo and EAS
-        uses: expo/expo-github-action@v8
-        with:
-          eas-version: latest
-          token: ${{ secrets.EXPO_TOKEN }}
+          cache: 'npm'
 
       - name: Install dependencies
         run: npm ci
 
       - name: Publish preview update
-        run: eas update --branch preview --environment preview --message "${{ github.event.head_commit.message }}" --non-interactive
+        run: npx eas-cli@latest update --branch preview --environment preview --message "${{ github.event.head_commit.message }}" --non-interactive
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}

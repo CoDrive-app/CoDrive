@@ -14,7 +14,12 @@ export function crewFromName(name: string, taken: number): Crew | null {
   };
 }
 
-/** The trip creator, and the last remaining person, stay on the trip. */
+/** Someone added by name on the Trip tab, rather than an account that joined with the share code. */
+export function isGuest(member: Crew) {
+  return member.id.startsWith('crew-');
+}
+
+/** Accounts leave a trip from Home, so only people added by name can be removed here. The last person always stays. */
 export function crewMemberLocked(crew: Crew[], member: Crew) {
-  return member.id === 'you' || crew.length <= 1;
+  return !isGuest(member) || crew.length <= 1;
 }
