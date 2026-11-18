@@ -3,6 +3,7 @@ import { ActivityIndicator, BackHandler, Platform, StyleSheet, Text, View } from
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
+  addWaypoint,
   createTrip,
   currentUser,
   getTrip,
@@ -14,11 +15,16 @@ import {
   removeTrip,
   setAuthToken,
   signOut,
+  updateTrip as saveTrip,
+  voteWaypoint,
   type AddressSuggestion,
   type ApiExpense,
   type ApiMember,
+  type ApiPlace,
   type ApiTrip,
+  type ApiTripDetail,
   type ApiUser,
+  type ApiWaypoint,
   type Spot,
 } from './src/api';
 import { MapBackdrop } from './src/components/MapBackdrop';
@@ -42,10 +48,11 @@ import { RotationDialog } from './src/screens/RotationDialog';
 import { StopNoteDialog } from './src/screens/StopNoteDialog';
 import { TripSettingsScreen, type TripSettings } from './src/screens/TripSettingsScreen';
 import { clearToken, loadToken, saveToken } from './src/session';
-import { applyEndpoints, spotFor, where } from './src/stops';
+import { isGuest } from './src/crew';
+import { spotFor } from './src/stops';
 import { C } from './src/theme';
-import { castVote } from './src/votes';
-import type { Crew, Expense, ExpenseType, Tab, Trip } from './src/types';
+import { castVote, statusFor } from './src/votes';
+import type { Crew, Expense, ExpenseType, Tab, Trip, Waypoint } from './src/types';
 
 function expenseFromApi(row: ApiExpense): Expense {
   const type = EXPENSE_TYPES.some((item) => item.value === row.category) ? (row.category as ExpenseType) : 'other';
@@ -66,9 +73,9 @@ function expenseFromApi(row: ApiExpense): Expense {
 
 const CREW_COLORS = ['#E26D5A', '#3AA99A', '#E2B045', '#5B7CFA', '#8B6CC4'];
 
-/** A trip's crew is the accounts on it, in the order they joined. */
-function crewFromMembers(members: ApiMember[]): Crew[] {
-  return members.map((member, index) => ({
+/** A trip's crew is the accounts on it, in the order they joined, then anyone added by name. */
+function crewFromApi(members: ApiMember[], guests: ApiTrip['guests']): Crew[] {
+  return [...members, ...guests].map((member, index) => ({
     id: member.id,
     name: member.name,
     initial: member.name.trim().charAt(0).toUpperCase() || '?',
@@ -76,28 +83,72 @@ function crewFromMembers(members: ApiMember[]): Crew[] {
   }));
 }
 
-function tripFromApi(row: ApiTrip): Trip {
-  const created = new Date(row.created_at);
-  const dates = Number.isNaN(created.getTime())
-    ? 'Dates TBD'
-    : created.toLocaleDateString('en-US', { month: 'short', day: '2-digit', year: 'numeric' });
+const STOP_LOOKS = {
+  start: { detail: 'Start', image: IMG.coast, time: '9:00 AM', stop: 'Departure', pin: '#E26D5A' },
+  end: { detail: 'Destination', image: IMG.hills, time: '—', stop: 'Arrival', pin: '#5B7CFA' },
+  suggestion: { detail: 'Suggested stop', image: IMG.lake, time: '—', stop: 'New suggestion', pin: '#8B6CC4' },
+};
+
+function stopFromApi(row: ApiWaypoint): Waypoint {
+  const role = row.role ?? undefined;
+  return {
+    id: row.id,
+    title: row.name,
+    ...STOP_LOOKS[role ?? 'suggestion'],
+    note: row.note || undefined,
+    proposedBy: row.proposed_by ?? 'Someone',
+    likes: row.likes,
+    dislikes: row.dislikes,
+    vote: row.my_vote,
+    // Start and End are always on the route. Other stops follow your vote.
+    status: role ? 'selected' : statusFor(row.my_vote),
+    ...(row.latitude !== null && row.longitude !== null ? { latitude: row.latitude, longitude: row.longitude } : {}),
+    role,
+  };
+}
+
+/** Start first, End last, and suggestions in the order they were added. */
+function stopsFromApi(rows: ApiWaypoint[]): Waypoint[] {
+  const rank = (row: ApiWaypoint) => (row.role === 'start' ? 0 : row.role === 'end' ? 2 : 1);
+  return [...rows].sort((a, b) => rank(a) - rank(b) || a.sequence_order - b.sequence_order).map(stopFromApi);
+}
+
+function datesText(start: string | null, end: string | null) {
+  if (start && end) return formatTripDates(start, end);
+  if (start) return formatIso(start);
+  if (end) return `Until ${formatIso(end)}`;
+  return 'Dates TBD';
+}
+
+/** The trip as the server has it. The trip list leaves out stops and expenses; `getTrip` fills them in. */
+function tripFromApi(row: ApiTrip | ApiTripDetail): Trip {
+  const waypoints = 'waypoints' in row ? stopsFromApi(row.waypoints) : [];
+  const start = waypoints.find((stop) => stop.role === 'start')?.title;
+  const end = waypoints.find((stop) => stop.role === 'end')?.title;
   return {
     id: row.id,
     shareCode: row.share_code,
     role: row.role,
     title: row.title,
     routeName: row.title,
-    dates,
-    image: IMG.road,
-    crew: crewFromMembers(row.members),
-    waypoints: [],
-    expenses: [],
+    dates: datesText(row.start_date, row.end_date),
+    startDate: row.start_date ?? undefined,
+    endDate: row.end_date ?? undefined,
+    image: row.image ?? IMG.road,
+    crew: crewFromApi(row.members, row.guests),
+    waypoints,
+    expenses: 'expenses' in row ? row.expenses.map(expenseFromApi) : [],
     budget: Number(row.budget) > 0 ? Number(row.budget) : 0,
-    drivers: [],
+    drivers: row.drivers,
     duration: '—',
-    leg: row.title,
+    leg: start && end ? `${start} to ${end}` : 'Add a start and end on the Trip tab',
     rest: { place: 'Nearest safe pull-off', distance: '—', note: 'We’ll mark it once you’re moving' },
   };
+}
+
+function placeFor(name: string, spot: Spot | null): ApiPlace | null {
+  if (!name) return null;
+  return spot ? { name, latitude: spot.latitude, longitude: spot.longitude } : { name };
 }
 
 function CoDrive({ user, onSignOut }: { user: ApiUser; onSignOut: () => void }) {
@@ -122,6 +173,8 @@ function CoDrive({ user, onSignOut }: { user: ApiUser; onSignOut: () => void }) 
   const [draftStop, setDraftStop] = useState('');
   const [noteOpen, setNoteOpen] = useState(false);
   const [stopNote, setStopNote] = useState('');
+  const [addingStop, setAddingStop] = useState(false);
+  const [stopError, setStopError] = useState<string | null>(null);
   const [tripName, setTripName] = useState('');
   const [draftPlace, setDraftPlace] = useState<Spot | null>(null);
   const [expenseType, setExpenseType] = useState<ExpenseType | null>(null);
@@ -161,20 +214,15 @@ function CoDrive({ user, onSignOut }: { user: ApiUser; onSignOut: () => void }) 
     };
   }, []);
 
+  // The trip list has no stops or expenses, so load the open trip in full, and again on each tab
+  // so changes from the rest of the crew show up.
   const tripId = trip?.id;
   useEffect(() => {
-    if (tab !== 'costs' || !tripId || !isServerTrip(tripId)) return;
+    if (!tripId || !isServerTrip(tripId)) return;
     let active = true;
     getTrip(tripId)
       .then((saved) => {
-        if (!active) return;
-        setTrips((current) =>
-          current.map((item) =>
-            item.id === tripId
-              ? { ...item, crew: crewFromMembers(saved.members), expenses: saved.expenses.map(expenseFromApi) }
-              : item,
-          ),
-        );
+        if (active) setTrips((current) => current.map((item) => (item.id === tripId ? tripFromApi(saved) : item)));
       })
       .catch(() => undefined);
     return () => {
@@ -315,8 +363,7 @@ function CoDrive({ user, onSignOut }: { user: ApiUser; onSignOut: () => void }) 
     }
 
     const id = created.id;
-    const next: Trip = { ...tripFromApi(created), dates: 'Dates TBD', leg: 'Add a start and end on the Trip tab' };
-    setTrips((current) => [next, ...current]);
+    setTrips((current) => [tripFromApi(created), ...current]);
     setSelectedId(id);
     setTripName('');
     setCreating(false);
@@ -324,37 +371,31 @@ function CoDrive({ user, onSignOut }: { user: ApiUser; onSignOut: () => void }) 
     setInviteOpen(true);
   };
 
-  const saveSettings = (settings: TripSettings) => {
+  /** Saves the Trip tab on the server. Throws if the save fails, so the form can say so. */
+  const saveSettings = async (settings: TripSettings) => {
     if (!trip) return;
-    updateTrip(trip.id, (current) => {
-      const dates =
-        settings.startDate && settings.endDate
-          ? formatTripDates(settings.startDate, settings.endDate)
-          : settings.startDate
-            ? formatIso(settings.startDate)
-            : settings.endDate
-              ? `Until ${formatIso(settings.endDate)}`
-              : 'Dates TBD';
-      return {
-        ...current,
-        title: settings.title,
-        routeName: current.routeName === current.title ? settings.title : current.routeName,
-        dates,
-        startDate: settings.startDate || undefined,
-        endDate: settings.endDate || undefined,
-        budget: settings.budget,
-        image: settings.image,
-        crew: settings.crew,
-        drivers: settings.drivers,
-        leg: settings.start && settings.end ? `${settings.start} to ${settings.end}` : current.leg,
-        waypoints: applyEndpoints(current, settings.start, settings.end, settings.startSpot, settings.endSpot),
-      };
+    const accounts = new Set(trip.crew.filter((member) => !isGuest(member)).map((member) => member.id));
+    const saved = await saveTrip(trip.id, {
+      title: settings.title,
+      budget: settings.budget > 0 ? settings.budget : null,
+      start_date: settings.startDate || null,
+      end_date: settings.endDate || null,
+      // Pictures can be megabytes, so only send one that changed.
+      ...(settings.image !== trip.image ? { image: settings.image } : {}),
+      drivers: settings.drivers,
+      guests: settings.crew
+        .filter((member) => !accounts.has(member.id))
+        .map((member) => ({ id: member.id, name: member.name })),
+      start: placeFor(settings.start, settings.startSpot),
+      end: placeFor(settings.end, settings.endSpot),
     });
+    updateTrip(trip.id, () => tripFromApi(saved));
   };
 
   const requestStop = () => {
     if (!draftStop.trim() || !trip) return;
     setStopNote('');
+    setStopError(null);
     setNoteOpen(true);
   };
 
@@ -362,50 +403,55 @@ function CoDrive({ user, onSignOut }: { user: ApiUser; onSignOut: () => void }) 
     setDraftStop(place.name);
     setDraftPlace({ name: place.name, latitude: place.latitude, longitude: place.longitude });
     setStopNote('');
+    setStopError(null);
     setNoteOpen(true);
   };
 
-  const addStop = () => {
+  const addStop = async () => {
     const title = draftStop.trim();
-    if (!title || !trip) return;
-    const note = stopNote.trim();
-    const spot = spotFor(title, draftPlace);
+    if (!title || !trip || addingStop) return;
     const tripId = trip.id;
-    const localId = Date.now().toString();
-    updateTrip(tripId, (current) => ({
-      ...current,
-      waypoints: [
-        ...current.waypoints,
-        {
-          id: localId,
-          title,
-          detail: 'Suggested stop',
-          note: note || undefined,
-          proposedBy: user.name,
-          likes: 0,
-          dislikes: 0,
-          vote: null,
-          image: IMG.lake,
-          time: '—',
-          stop: 'New suggestion',
-          pin: '#8B6CC4',
-          status: 'suggested',
-          ...where(spot),
-        },
-      ],
-    }));
+    setAddingStop(true);
+    setStopError(null);
+    try {
+      const saved = await addWaypoint(tripId, {
+        ...placeFor(title, spotFor(title, draftPlace))!,
+        note: stopNote.trim(),
+      });
+      // New suggestions go before the End, where they will be after a reload.
+      updateTrip(tripId, (current) => {
+        const end = current.waypoints.filter((stop) => stop.role === 'end');
+        const rest = current.waypoints.filter((stop) => stop.role !== 'end');
+        return { ...current, waypoints: [...rest, stopFromApi(saved), ...end] };
+      });
+    } catch (error) {
+      setStopError(error instanceof Error ? error.message : 'Could not add the stop');
+      return;
+    } finally {
+      setAddingStop(false);
+    }
     setDraftStop('');
     setDraftPlace(null);
     setStopNote('');
     setNoteOpen(false);
   };
 
+  /** Shows the vote straight away, then keeps the server's counts, or puts the stop back if the vote did not save. */
   const vote = (id: string, direction: 'up' | 'down') => {
     if (!trip) return;
-    updateTrip(trip.id, (current) => ({
-      ...current,
-      waypoints: current.waypoints.map((stop) => (stop.id === id ? castVote(stop, direction) : stop)),
-    }));
+    const tripId = trip.id;
+    const before = trip.waypoints.find((stop) => stop.id === id);
+    if (!before) return;
+    const after = castVote(before, direction);
+    const replace = (next: Waypoint) =>
+      updateTrip(tripId, (current) => ({
+        ...current,
+        waypoints: current.waypoints.map((stop) => (stop.id === id ? next : stop)),
+      }));
+    replace(before.role ? { ...after, status: 'selected' } : after);
+    voteWaypoint(tripId, id, after.vote)
+      .then((saved) => replace(stopFromApi(saved)))
+      .catch(() => replace(before));
   };
 
   const handleLog = async () => {
@@ -625,6 +671,8 @@ function CoDrive({ user, onSignOut }: { user: ApiUser; onSignOut: () => void }) 
             onNote={setStopNote}
             onConfirm={addStop}
             onClose={() => setNoteOpen(false)}
+            submitting={addingStop}
+            error={stopError}
           />
         ) : null}
 

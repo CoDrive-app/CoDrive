@@ -29,7 +29,7 @@ npm start
 - **Drive.** Follow the route and today’s itinerary. With two or more drivers set on the Trip tab, the route is split into one colour per driver, each stretch as long as that driver can drive; a change of colour is a change of driver. If one driver can cover the whole route, or only one driver is set, the line is in that driver's colour. A change within 5 miles of a stop moves to that stop. The steering-wheel control opens the driver-rotation reminder, using the first driver set on the Trip tab. The map shows real streets from Geoapify map tiles. It pans with one finger and zooms with a pinch or the + and - buttons, and the target button jumps to your location (or back to the whole route if there is none). Tap a pin to see that stop's time, notes, who suggested it, and its votes. The route line turns translucent once you zoom in far enough for street names to show. The bluetooth control opens the connection-lost notice.
 - **Split.** See the shared budget and log an expense, including notes for who paid and whether it was split.
 
-Trips, crews and expenses come from the API for the signed-in account. Trip settings, suggested stops and votes are still kept on the phone only, so the rest of the crew does not see them yet.
+Everything about a trip is saved in the API's database: its settings (name, start and end, dates, budget, picture, people added by name, drivers), suggested stops with their notes, and each person's vote. Reloading the app or opening it on another phone shows the same trip. The phone itself keeps only the sign-in token. On the Plan tab a stop's status still follows your own vote, while the counts include the whole crew.
 
 ## Drive screen
 
@@ -74,8 +74,9 @@ Tables:
 - `users` — `id`, `email` (unique, any case), `name`, `password_hash`, `created_at`
 - `sessions` — `token_hash`, `user_id`, `created_at`, `expires_at`
 - `trip_members` — `trip_id`, `user_id`, `role` (`owner` or `member`), `joined_at`
-- `trips` — `id`, `title`, `share_code`, `budget`, `owner_id`, `created_at`
-- `waypoints` — `id`, `trip_id`, `name`, `latitude`, `longitude`, `sequence_order`, plus a PostGIS `location` point filled from the coordinates
+- `trips` — `id`, `title`, `share_code`, `budget`, `owner_id`, `created_at`, `start_date`, `end_date`, `image` (an https URL or image data URL), `drivers` (JSON list of crew ids and limits), `guests` (JSON list of people added by name)
+- `waypoints` — `id`, `trip_id`, `name`, `latitude` and `longitude` (empty until a place is picked), `sequence_order`, `role` (`start`, `end`, or empty for a suggestion), `note`, `proposed_by`, `created_at`, plus a PostGIS `location` point filled from the coordinates
+- `waypoint_votes` — `waypoint_id`, `user_id`, `vote` (`up` or `down`), one per person per stop
 - `expenses` — `id`, `trip_id`, `paid_by_user`, `amount`, `category`, `title`, `description`, `photos`, `created_by`
 
 Endpoints:
@@ -88,8 +89,10 @@ Endpoints:
 - `POST /api/trips` — body `{ "title": "North Shore Getaway", "budget": 500 }`. `budget` is optional and must be greater than 0. You become the owner and the API picks the share code.
 - `POST /api/trips/join` — body `{ "share_code": "N7XUAUT2" }`. Adds you to that trip's crew.
 - `DELETE /api/trips/:id` — the owner deletes the trip; a member leaves it.
-- `POST /api/trips/:id/waypoints` — body `{ "name": "Pipeline Beach", "latitude": 21.665, "longitude": -158.053 }`. `sequence_order` is optional and defaults to the next stop.
-- `GET /api/trips/:id` — the trip, its members, its stops in order, and its expenses.
+- `PATCH /api/trips/:id` — saves the Trip tab. Any of `title`, `budget` (null clears it), `start_date` and `end_date` (`YYYY-MM-DD` or null), `image` (https URL or image data URL under 3 MB, or null), `drivers` (`[{ "crewId", "limitMinutes" }]`, 60 to 720), `guests` (`[{ "id", "name" }]`), and `start` and `end` (`{ "name", "latitude"?, "longitude"? }`, or null to remove). Only the fields sent change. Returns the trip like `GET /api/trips/:id`.
+- `POST /api/trips/:id/waypoints` — body `{ "name": "Pipeline Beach", "latitude": 21.665, "longitude": -158.053, "note": "Surf check" }`. The location and note are optional. `sequence_order` is optional and defaults to the next stop.
+- `PUT /api/trips/:id/waypoints/:waypointId/vote` — body `{ "vote": "up" | "down" | null }`. null takes your vote back. Returns the stop with its counts.
+- `GET /api/trips/:id` — the trip, its members, its stops in order (with `likes`, `dislikes` and your `my_vote`), and its expenses.
 - `GET /api/geo/autocomplete?text=Ala Moana` — up to 5 address suggestions with coordinates, looked up through Geoapify. Needs `GEOAPIFY_API_KEY`. `text` must be 3 to 200 characters, and each caller is limited to 60 searches a minute.
 - `GET /api/geo/places?category=food|gas|beach|sights|lodging&lat=...&lon=...` — named places of that kind within about 9 miles of a point.
 - `GET /api/geo/tile/osm-bright/:z/:x/:y` — one high-resolution map tile as a PNG. The API keeps recently used tiles in memory, up to 64 MB, and only tiles it has to fetch count toward Geoapify credits and the limit of 600 a minute per caller.

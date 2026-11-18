@@ -8,7 +8,7 @@ import { PrimaryButton } from '../components/Buttons';
 import { DateField } from '../components/DateField';
 import { Field } from '../components/Field';
 import { WheelPicker } from '../components/WheelPicker';
-import { crewFromName, crewMemberLocked } from '../crew';
+import { crewFromName, crewMemberLocked, isGuest } from '../crew';
 import { parseTripDates } from '../dates';
 import { joinLimit, setLimit, splitLimit, toggleDriver } from '../drivers';
 import { endpoint, spotFor, spotOf } from '../stops';
@@ -30,6 +30,9 @@ export type TripSettings = {
   drivers: Driver[];
   crew: Crew[];
 };
+
+/** The API turns away trip pictures above 3 MB. */
+const MAX_IMAGE_LENGTH = 3_000_000;
 
 type Draft = {
   title: string;
@@ -94,7 +97,8 @@ export function TripSettingsScreen({
   focus,
 }: {
   trip: Trip;
-  onSave: (settings: TripSettings) => void;
+  /** Rejects if the trip could not be saved. */
+  onSave: (settings: TripSettings) => Promise<void>;
   /** Scrolls to this field and puts the cursor in it when the screen opens. */
   focus?: 'budget';
 }) {
@@ -106,9 +110,12 @@ export function TripSettingsScreen({
   const [crewNote, setCrewNote] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
 
   const change = (patch: Partial<Draft>) => {
     setSaved(false);
+    setSaveError(null);
     setDraft((current) => ({ ...current, ...patch }));
   };
 
@@ -160,34 +167,53 @@ export function TripSettingsScreen({
         setPhotoNote('Photo access is off, so this trip will keep its current picture.');
         return;
       }
+      // The picture is saved on the server for the whole crew, so it is sent as data rather than a path on this phone.
       const result = await ImagePicker.launchImageLibraryAsync({
         mediaTypes: ['images'],
         allowsEditing: true,
         aspect: [4, 3],
-        quality: 0.8,
+        quality: 0.4,
+        base64: true,
       });
-      if (!result.canceled && result.assets[0]) change({ image: result.assets[0].uri });
+      const asset = result.canceled ? undefined : result.assets[0];
+      if (!asset) return;
+      const image = asset.base64 ? `data:${asset.mimeType ?? 'image/jpeg'};base64,${asset.base64}` : asset.uri;
+      if (!image.startsWith('data:image/')) {
+        setPhotoNote('That picture could not be read. Try another one.');
+      } else if (image.length > MAX_IMAGE_LENGTH) {
+        setPhotoNote('That picture is too large. Try a smaller one or crop it tighter.');
+      } else {
+        change({ image });
+      }
     } finally {
       setBusy(false);
     }
   };
 
-  const save = () => {
-    if (!valid || !dirty) return;
-    onSave({
-      title: draft.title.trim(),
-      start,
-      end,
-      startSpot,
-      endSpot,
-      startDate: draft.startDate,
-      endDate: draft.endDate,
-      budget: budgetValue,
-      image: draft.image,
-      drivers: draft.drivers.filter((driver) => draft.crew.some((member) => member.id === driver.crewId)),
-      crew: draft.crew,
-    });
-    setSaved(true);
+  const save = async () => {
+    if (!valid || !dirty || saving) return;
+    setSaving(true);
+    setSaveError(null);
+    try {
+      await onSave({
+        title: draft.title.trim(),
+        start,
+        end,
+        startSpot,
+        endSpot,
+        startDate: draft.startDate,
+        endDate: draft.endDate,
+        budget: budgetValue,
+        image: draft.image,
+        drivers: draft.drivers.filter((driver) => draft.crew.some((member) => member.id === driver.crewId)),
+        crew: draft.crew,
+      });
+      setSaved(true);
+    } catch (error) {
+      setSaveError(error instanceof Error ? error.message : 'Could not save the trip');
+    } finally {
+      setSaving(false);
+    }
   };
 
   return (
@@ -262,7 +288,7 @@ export function TripSettingsScreen({
                 <Text style={styles.name} numberOfLines={1}>
                   {member.name}
                 </Text>
-                {member.id === 'you' ? <Text style={styles.role}>Stays on the trip</Text> : null}
+                {!isGuest(member) ? <Text style={styles.role}>Joined with the code</Text> : null}
               </View>
               <TouchableOpacity
                 style={styles.remove}
@@ -372,8 +398,14 @@ export function TripSettingsScreen({
                 : 'The end date cannot be before the start date.'}
           </Text>
         ) : null}
+        {saveError ? <Text style={styles.hint}>{saveError}</Text> : null}
         <View style={styles.save}>
-          <PrimaryButton label={saved && !dirty ? 'Saved' : 'Save changes'} onPress={save} disabled={!valid || !dirty} />
+          <PrimaryButton
+            label={saving ? 'Saving…' : saved && !dirty ? 'Saved' : 'Save changes'}
+            onPress={save}
+            disabled={!valid || !dirty || saving}
+            loading={saving}
+          />
         </View>
       </ScrollView>
     </View>

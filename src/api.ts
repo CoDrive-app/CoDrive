@@ -38,6 +38,32 @@ export type ApiTrip = {
   /** Your role on this trip. The owner can delete it; members can leave it. */
   role: 'owner' | 'member';
   members: ApiMember[];
+  /** YYYY-MM-DD, or null when not set. */
+  start_date: string | null;
+  end_date: string | null;
+  /** An https URL or an image data URL. null means the default picture. */
+  image: string | null;
+  drivers: { crewId: string; limitMinutes: number }[];
+  /** Crew members without an account. */
+  guests: { id: string; name: string }[];
+};
+
+export type ApiTripDetail = ApiTrip & { waypoints: ApiWaypoint[]; expenses: ApiExpense[] };
+
+export type ApiPlace = { name: string; latitude?: number; longitude?: number };
+
+/** Fields for `updateTrip`. Leave one out to keep it as it is. */
+export type TripPatch = {
+  title?: string;
+  budget?: number | null;
+  start_date?: string | null;
+  end_date?: string | null;
+  image?: string | null;
+  drivers?: ApiTrip['drivers'];
+  guests?: ApiTrip['guests'];
+  /** null removes the stop. */
+  start?: ApiPlace | null;
+  end?: ApiPlace | null;
 };
 
 let authToken: string | null = null;
@@ -79,9 +105,16 @@ export type ApiWaypoint = {
   id: string;
   trip_id: string;
   name: string;
-  latitude: number;
-  longitude: number;
+  latitude: number | null;
+  longitude: number | null;
   sequence_order: number;
+  role: 'start' | 'end' | null;
+  note: string;
+  /** The name of whoever suggested it, or null if their account is gone. */
+  proposed_by: string | null;
+  likes: number;
+  dislikes: number;
+  my_vote: 'up' | 'down' | null;
 };
 
 export type ApiExpense = {
@@ -150,7 +183,21 @@ export function listTrips() {
 }
 
 export function getTrip(id: string) {
-  return request<ApiTrip & { waypoints: ApiWaypoint[]; expenses: ApiExpense[] }>(`/api/trips/${id}`);
+  return request<ApiTripDetail>(`/api/trips/${id}`);
+}
+
+export function updateTrip(id: string, patch: TripPatch) {
+  return request<ApiTripDetail>(`/api/trips/${id}`, {
+    method: 'PATCH',
+    body: JSON.stringify(patch),
+  });
+}
+
+export function voteWaypoint(tripId: string, waypointId: string, vote: 'up' | 'down' | null) {
+  return request<ApiWaypoint>(`/api/trips/${tripId}/waypoints/${waypointId}/vote`, {
+    method: 'PUT',
+    body: JSON.stringify({ vote }),
+  });
 }
 
 export function createTrip(title: string, budget?: number) {
@@ -174,7 +221,7 @@ export function removeTrip(id: string) {
 
 export function addWaypoint(
   tripId: string,
-  stop: { name: string; latitude: number; longitude: number; sequence_order?: number },
+  stop: ApiPlace & { note?: string; sequence_order?: number },
 ) {
   return request<ApiWaypoint>(`/api/trips/${tripId}/waypoints`, {
     method: 'POST',
