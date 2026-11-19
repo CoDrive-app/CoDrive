@@ -91,7 +91,7 @@ const STOP_LOOKS = {
   suggestion: { detail: 'Suggested stop', image: IMG.lake, time: '—', stop: 'New suggestion', pin: '#8B6CC4' },
 };
 
-/** `groupSize` is how many people are on the trip, which sets how many votes make a majority. */
+/** `groupSize` is how many people on the trip can vote, which sets how many votes make a majority. */
 function stopFromApi(row: ApiWaypoint, groupSize: number): Waypoint {
   const role = row.role ?? undefined;
   return {
@@ -112,6 +112,11 @@ function stopFromApi(row: ApiWaypoint, groupSize: number): Waypoint {
 }
 
 /** Start first, End last, and suggestions in the order they were added. */
+/** Only people with an account can vote, so only they count toward a majority. People added by name don't. */
+function voterCount(crew: Crew[]) {
+  return crew.filter((member) => !isGuest(member)).length;
+}
+
 function stopsFromApi(rows: ApiWaypoint[], groupSize: number): Waypoint[] {
   const rank = (row: ApiWaypoint) => (row.role === 'start' ? 0 : row.role === 'end' ? 2 : 1);
   return [...rows].sort((a, b) => rank(a) - rank(b) || a.sequence_order - b.sequence_order).map((row) => stopFromApi(row, groupSize));
@@ -127,7 +132,7 @@ function datesText(start: string | null, end: string | null) {
 /** The trip as the server has it. The trip list leaves out stops and expenses; `getTrip` fills them in. */
 function tripFromApi(row: ApiTrip | ApiTripDetail): Trip {
   const crew = crewFromApi(row.members, row.guests);
-  const waypoints = 'waypoints' in row ? stopsFromApi(row.waypoints, crew.length) : [];
+  const waypoints = 'waypoints' in row ? stopsFromApi(row.waypoints, voterCount(crew)) : [];
   const start = waypoints.find((stop) => stop.role === 'start')?.title;
   const end = waypoints.find((stop) => stop.role === 'end')?.title;
   return {
@@ -435,7 +440,7 @@ function CoDrive({ user, onSignOut }: { user: ApiUser; onSignOut: () => void }) 
       updateTrip(tripId, (current) => {
         const end = current.waypoints.filter((stop) => stop.role === 'end');
         const rest = current.waypoints.filter((stop) => stop.role !== 'end');
-        return { ...current, waypoints: [...rest, stopFromApi(saved, current.crew.length), ...end] };
+        return { ...current, waypoints: [...rest, stopFromApi(saved, voterCount(current.crew)), ...end] };
       });
     } catch (error) {
       setStopError(error instanceof Error ? error.message : 'Could not add the stop');
@@ -455,7 +460,7 @@ function CoDrive({ user, onSignOut }: { user: ApiUser; onSignOut: () => void }) 
     const tripId = trip.id;
     const before = trip.waypoints.find((stop) => stop.id === id);
     if (!before) return;
-    const groupSize = trip.crew.length;
+    const groupSize = voterCount(trip.crew);
     const after = castVote(before, direction, groupSize);
     const replace = (next: Waypoint) =>
       updateTrip(tripId, (current) => ({
