@@ -6,6 +6,7 @@ import type { AddressSuggestion } from '../api';
 import { searchAnchor } from '../route';
 import { StatusBadge } from '../components/StatusBadge';
 import { StopSearch } from '../components/StopSearch';
+import { TrashIcon } from '../components/TrashIcon';
 import { TripHeader } from '../components/TripHeader';
 import { VoteButton } from '../components/VoteButton';
 
@@ -77,9 +78,9 @@ export function PlanScreen({
                     activeOpacity={0.6}
                     hitSlop={8}
                     accessibilityRole="button"
-                    accessibilityLabel={`Remove ${stop.title}`}
+                    accessibilityLabel={`${removeLabel(stop)}: ${stop.title}`}
                   >
-                    <Text style={styles.removeText}>{removeLabel(stop)}</Text>
+                    <TrashIcon />
                   </TouchableOpacity>
                 ) : null}
               </View>
@@ -114,14 +115,7 @@ const styles = StyleSheet.create({
   },
   remove: {
     marginLeft: 'auto',
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-  },
-  removeText: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: C.muted,
-    letterSpacing: 0.2,
+    padding: 6,
   },
   body: {
     paddingHorizontal: 14,
