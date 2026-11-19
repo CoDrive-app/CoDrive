@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { LayoutAnimation, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { C, layout } from '../theme';
 import type { Trip } from '../types';
@@ -28,6 +28,12 @@ export function DriveScreen({
 }) {
   const [height, setHeight] = useState(0);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  // The route progress box starts minimized, so the map stays clear until someone wants it.
+  const [progressOpen, setProgressOpen] = useState(false);
+  const showProgress = (open: boolean) => {
+    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+    setProgressOpen(open);
+  };
   const drivers = currentDrivers(trip);
   const stops = routedStops(trip);
   const { plan, failed, loading } = useRoute(stops);
@@ -133,9 +139,31 @@ export function DriveScreen({
             onClose={() => setSelectedId(null)}
           />
         ) : null}
-        {!fullMap && !selected ? (
+        {!fullMap && !selected && !progressOpen ? (
+          // Sits just above the itinerary panel, so it moves with the panel when the panel is dragged.
+          <TouchableOpacity
+            style={styles.progressPill}
+            onPress={() => showProgress(true)}
+            activeOpacity={0.85}
+            accessibilityRole="button"
+            accessibilityLabel="See route progress"
+          >
+            <Text style={styles.progressPillText}>See Route Progress</Text>
+            <MaterialCommunityIcons name="chevron-up" size={18} color={C.white} />
+          </TouchableOpacity>
+        ) : null}
+        {!fullMap && !selected && progressOpen ? (
           <View style={styles.routing}>
-            <Text style={styles.routingTitle}>Routing {trip.routeName}</Text>
+            <TouchableOpacity
+              style={styles.minimize}
+              onPress={() => showProgress(false)}
+              hitSlop={10}
+              accessibilityRole="button"
+              accessibilityLabel="Minimize route progress"
+            >
+              <MaterialCommunityIcons name="chevron-down" size={22} color="rgba(255,255,255,0.85)" />
+            </TouchableOpacity>
+            <Text style={[styles.routingTitle, styles.routingTitleRoom]}>Routing {trip.routeName}</Text>
             <Text style={styles.routingLeg}>{legLine}</Text>
             {driverLegs.length > 1 ? (
               <View style={styles.legend}>
@@ -257,6 +285,35 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     paddingHorizontal: 14,
     paddingVertical: 12,
+  },
+  progressPill: {
+    position: 'absolute',
+    bottom: 36,
+    alignSelf: 'center',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingLeft: 16,
+    paddingRight: 12,
+    paddingVertical: 9,
+    borderRadius: 999,
+    backgroundColor: 'rgba(27, 49, 41, 0.72)',
+  },
+  progressPillText: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: C.white,
+  },
+  minimize: {
+    position: 'absolute',
+    top: 8,
+    right: 8,
+    zIndex: 1,
+    padding: 2,
+  },
+  routingTitleRoom: {
+    // Leaves room for the minimize arrow in the corner.
+    marginRight: 28,
   },
   routingTitle: {
     fontSize: 16,
