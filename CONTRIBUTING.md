@@ -11,6 +11,9 @@ Work this way on every change, including docs-only and config-only changes.
 - Do not force-push `main`.
 - Do not merge a pull request that leaves `main` unable to start or that breaks the flow you just changed.
 - After a merge, `main` is what we demo and what hosting deploys. If it is not ready to show, it does not belong on `main`.
+- `main` is the only branch that uses the production database. `./start.sh` on `main` talks to the hosted API and does not start the local database.
+
+Every other branch uses the local database. `./start.sh` there starts Docker Postgres and the local API, and Expo stays offline so the branch does not contact Expo's servers or the production database.
 
 ## Branch from `main`
 
@@ -49,7 +52,7 @@ Push the branch the day you create it, then push again after every working slice
 git push -u origin HEAD
 ```
 
-Small, frequent pushes keep the remote timeline readable and show everyone what is in progress. An open draft pull request does the same job: open it as soon as the branch exists, and mark it ready when the change runs.
+Small, frequent pushes keep the remote timeline readable and show everyone what is in progress. An open draft pull request does the same job: open it as soon as the branch exists, and mark it ready after staging QA passes.
 
 Before you push, update from `main` if `main` has moved:
 
@@ -62,20 +65,40 @@ git merge main
 
 Resolve conflicts on your branch. Leave `main` alone until the pull request is ready.
 
+## Test on `staging`
+
+`staging` is a temporary copy of `main`. Use it to run manual testing against the database that mimics what `main` sees. A feature branch still uses the local database. `staging` is where the change is checked in an environment closer to production.
+
+When the branch runs locally, put that branch onto `staging`. Merge the original branch into `staging`. Do not merge `staging` into `main`, and do not merge `staging` back into the original branch.
+
+If `staging` is not already the same as `main`, run the Sync Staging to Main workflow first so the test starts from current `main`. Then:
+
+```bash
+git checkout staging
+git pull origin staging
+git merge feature/driver-rotation
+git push origin staging
+```
+
+`staging` holds one change under test. Run the manual checks there. If they fail, fix them on the original branch, push that branch, and merge it into `staging` again. Leave `main` alone until those checks pass.
+
 ## Merge through a pull request
 
-When the branch runs, open or mark the pull request ready and merge it into `main`.
+When staging QA passes, open or mark the pull request ready and merge the original branch into `main`.
 
 Before merge, confirm:
 
+- Staging QA passed on this change.
 - The branch is up to date with `main`.
 - `./start.sh` brings the app up, or you state exactly which step you ran and what you checked.
-- The pull request describes what changed and how you checked it.
+- The pull request describes what changed and how you checked it, including what you checked on `staging`.
 - The change is the one thing the branch was opened for.
 
-Merge, then delete the branch on GitHub and locally (`git branch -d feature/driver-rotation`). The next task starts from a fresh `main`, not from the old branch.
+Merging into `main` pushes `main`. That push runs Sync Staging to Main (`.github/workflows/reset-staging.yml`), which resets `staging` to match the new `main`. You can also run that workflow by hand from the Actions tab. Anything that existed only on `staging` is discarded.
 
-A fix for something already on `main` uses the same path: `fix/...` from current `main`, push, pull request, merge. Do not patch `main` in place.
+Merge, then delete the branch on GitHub and locally (`git branch -d feature/driver-rotation`). The next task starts from a fresh `main`, not from `staging` or the old branch.
+
+A fix for something already on `main` uses the same path: `fix/...` from current `main`, push, staging QA, pull request, merge. Do not patch `main` in place.
 
 ## Commits
 

@@ -1,10 +1,20 @@
 #!/usr/bin/env bash
 set -e
 
-echo "Starting local environment..."
+branch="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || true)"
+on_main=0
+if [ "$branch" = "main" ]; then
+  on_main=1
+fi
+
+if [ "$on_main" -eq 1 ]; then
+  echo "On main: using the hosted API and the production database. The local database stays stopped."
+else
+  echo "On ${branch:-this branch}: local database only. This branch does not contact Expo or the production database."
+fi
 
 # 1. Prepare environment files first
-if [ ! -f "server/.env" ] && [ -f "server/.env.example" ]; then
+if [ "$on_main" -eq 0 ] && [ ! -f "server/.env" ] && [ -f "server/.env.example" ]; then
   echo "Copying server environment variables..."
   cp server/.env.example server/.env
 fi
@@ -15,28 +25,34 @@ if [ ! -d "node_modules" ]; then
   npm install
 fi
 
-if [ ! -d "server/node_modules" ]; then
+if [ "$on_main" -eq 0 ] && [ ! -d "server/node_modules" ]; then
   echo "Installing server dependencies..."
   (cd server && npm install)
 fi
 
-# 3. Start background infrastructure (Docker runs in detached mode with -d)
-docker compose up -d
+# 3. Feature branches get the local database. main does not.
+if [ "$on_main" -eq 0 ]; then
+  docker compose up -d
+fi
 
 # 4. Cleanup helper: kill background processes when you press Ctrl+C
 cleanup() {
   echo -e "\nStopping all services..."
   kill $(jobs -p) 2>/dev/null || true
-  docker compose down
+  if [ "$on_main" -eq 0 ]; then
+    docker compose down
+  fi
   exit
 }
 trap cleanup SIGINT SIGTERM
 
-# 5. Start server in the background
-echo "Starting backend server..."
-(cd server && npm start) &
+# 5. Start the local API only off main
+if [ "$on_main" -eq 0 ]; then
+  echo "Starting backend server..."
+  (cd server && npm start) &
+fi
 
-# 6. Start Metro / Web packager in background if needed
+# 6. Start Metro. Off main this stays offline and uses the local API.
 echo "Starting Metro bundler..."
 npm start &
 

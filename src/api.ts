@@ -2,14 +2,17 @@ import Constants from 'expo-constants';
 import { Platform } from 'react-native';
 
 /**
- * A root `.env` value `EXPO_PUBLIC_API_URL` points Expo at the hosted API.
- * Leave it unset to keep the local API: web and the iOS Simulator use
+ * `main` uses the hosted API and its production database.
+ * Every other branch uses the local API only: web and the iOS Simulator use
  * http://localhost:3000, the Android emulator uses http://10.0.2.2:3000 when
  * Expo has no LAN host, and a physical phone uses http://<this computer's LAN address>:3000.
  */
 export function apiBaseUrl(): string {
-  const configured = process.env.EXPO_PUBLIC_API_URL?.trim().replace(/\/$/, '');
-  if (configured) return configured;
+  const extra = Constants.expoConfig?.extra as { useProductionApi?: boolean; apiUrl?: string } | undefined;
+  if (extra?.useProductionApi) {
+    const hosted = extra.apiUrl?.trim().replace(/\/$/, '');
+    if (hosted) return hosted;
+  }
 
   const host = packagerHost();
   if (host && Platform.OS !== 'web') {

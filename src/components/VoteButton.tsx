@@ -96,6 +96,7 @@ export function VoteButton({
     ]).start();
   }, [active, pop]);
 
+  const shown = Number.isFinite(count) ? count : 0;
   return (
     <TouchableOpacity
       onPress={onPress}
@@ -105,10 +106,11 @@ export function VoteButton({
       accessibilityState={{ selected: active }}
       accessibilityLabel={label}
     >
-      <Animated.View style={{ transform: [{ scale: pop }, { rotate: active ? look.tilt : '0deg' }] }}>
+      {/* The drawing sits on top of the pill. It must not take the click, or the thumb itself does nothing. */}
+      <Animated.View pointerEvents="none" style={{ transform: [{ scale: pop }, { rotate: active ? look.tilt : '0deg' }] }}>
         <Hand kind={kind} active={active} />
       </Animated.View>
-      <Text style={[styles.count, active && styles.countOn]}>{count}</Text>
+      <Text pointerEvents="none" style={[styles.count, active && styles.countOn]}>{shown}</Text>
     </TouchableOpacity>
   );
 }

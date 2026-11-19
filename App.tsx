@@ -73,9 +73,14 @@ function expenseFromApi(row: ApiExpense): Expense {
 
 const CREW_COLORS = ['#E26D5A', '#3AA99A', '#E2B045', '#5B7CFA', '#8B6CC4'];
 
+/** Keeps a missing or non-list field from crashing the trip list. */
+function listFromApi<T>(value: T[] | null | undefined): T[] {
+  return Array.isArray(value) ? value : [];
+}
+
 /** A trip's crew is the accounts on it, in the order they joined, then anyone added by name. */
-function crewFromApi(members: ApiMember[], guests: ApiTrip['guests']): Crew[] {
-  return [...members, ...guests].map((member, index) => ({
+function crewFromApi(members: ApiMember[] | null | undefined, guests?: ApiTrip['guests'] | null): Crew[] {
+  return [...listFromApi(members), ...listFromApi(guests)].map((member, index) => ({
     id: member.id,
     name: member.name,
     initial: member.name.trim().charAt(0).toUpperCase() || '?',
@@ -122,7 +127,7 @@ function datesText(start: string | null, end: string | null) {
 
 /** The trip as the server has it. The trip list leaves out stops and expenses; `getTrip` fills them in. */
 function tripFromApi(row: ApiTrip | ApiTripDetail): Trip {
-  const waypoints = 'waypoints' in row ? stopsFromApi(row.waypoints) : [];
+  const waypoints = 'waypoints' in row ? stopsFromApi(listFromApi(row.waypoints)) : [];
   const start = waypoints.find((stop) => stop.role === 'start')?.title;
   const end = waypoints.find((stop) => stop.role === 'end')?.title;
   return {
@@ -137,9 +142,9 @@ function tripFromApi(row: ApiTrip | ApiTripDetail): Trip {
     image: row.image ?? IMG.road,
     crew: crewFromApi(row.members, row.guests),
     waypoints,
-    expenses: 'expenses' in row ? row.expenses.map(expenseFromApi) : [],
+    expenses: 'expenses' in row ? listFromApi(row.expenses).map(expenseFromApi) : [],
     budget: Number(row.budget) > 0 ? Number(row.budget) : 0,
-    drivers: row.drivers,
+    drivers: listFromApi(row.drivers),
     duration: '—',
     leg: start && end ? `${start} to ${end}` : 'Add a start and end on the Trip tab',
     rest: { place: 'Nearest safe pull-off', distance: '—', note: 'We’ll mark it once you’re moving' },

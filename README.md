@@ -2,7 +2,7 @@
 
 CoDrive is a mobile-first road-trip app for planning a route with your crew, rotating drivers, and splitting costs. It runs in Expo Go and in the browser.
 
-`main` is the version we showcase and host. Branch, push, and merge using [CONTRIBUTING.md](CONTRIBUTING.md).
+`main` is the version we showcase and host, and the only branch that uses the production database. Every other branch uses the local database and does not contact Expo. Branch, push, and merge using [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Run
 
@@ -53,7 +53,7 @@ For address search, put your Geoapify key in `server/.env` as `GEOAPIFY_API_KEY=
 
 The API listens on [http://localhost:3000](http://localhost:3000). Postgres is published on port 5433 so it does not collide with a Postgres already running on 5432.
 
-Leave `EXPO_PUBLIC_API_URL` unset and the app keeps using that local API. To point Expo at the hosted API, copy `.env.example` to `.env` in the project root, set `EXPO_PUBLIC_API_URL` to the Render URL with no trailing slash, and restart Expo.
+The git branch chooses the database. On `main`, the app calls the hosted API and does not start the local database. On every other branch, the app calls this local API and Expo starts offline. A root `.env` cannot point a feature branch at production.
 
 ## Hosted API
 
