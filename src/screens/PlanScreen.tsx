@@ -1,7 +1,7 @@
 import { useRef, type ComponentRef } from 'react';
 import { Image, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { C, cardShadow, layout } from '../theme';
+import { C, CATEGORY_COLORS, cardShadow, layout } from '../theme';
 import type { Trip, Waypoint } from '../types';
 import type { AddressSuggestion } from '../api';
 import { searchAnchor } from '../route';
@@ -61,7 +61,11 @@ export function PlanScreen({
         <Text style={layout.section}>Proposed stops</Text>
         {notice ? <Text style={styles.notice}>{notice}</Text> : null}
         {trip.waypoints.map((stop) => (
-          <View key={stop.id} style={styles.card}>
+          <View
+            key={stop.id}
+            // A stop of a known kind gets an outline in that kind's colour, matching its chip and its map pin.
+            style={[styles.card, stop.category && { borderWidth: 2, borderColor: CATEGORY_COLORS[stop.category] }]}
+          >
             <Image source={{ uri: stop.image }} style={styles.photo} />
             <StatusBadge status={stop.status} />
             <View style={styles.body}>

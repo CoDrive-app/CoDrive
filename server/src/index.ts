@@ -237,6 +237,13 @@ app.post('/api/trips/:id/waypoints', wrap(async (req, res) => {
     res.status(400).json({ error: 'note must be text up to 500 characters' });
     return;
   }
+  // Optional: what kind of place it is, which picks the stop's picture.
+  const rawCategory = req.body?.category;
+  if (rawCategory !== undefined && rawCategory !== null && (typeof rawCategory !== 'string' || !isPlaceCategory(rawCategory))) {
+    res.status(400).json({ error: 'category must be food, gas, beach, sights, lodging, or null' });
+    return;
+  }
+  const category: string | null = rawCategory ?? null;
 
   const explicitOrder = req.body?.sequence_order;
   let sequenceOrder: number | null = null;
@@ -270,10 +277,10 @@ app.post('/api/trips/:id/waypoints', wrap(async (req, res) => {
     }
 
     const inserted = await client.query(
-      `INSERT INTO waypoints (trip_id, name, latitude, longitude, sequence_order, note, proposed_by)
-       VALUES ($1, $2, $3, $4, $5, $6, $7)
+      `INSERT INTO waypoints (trip_id, name, latitude, longitude, sequence_order, note, proposed_by, category)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
        RETURNING id`,
-      [tripId, stop.name, stop.latitude, stop.longitude, sequenceOrder, note, user.id],
+      [tripId, stop.name, stop.latitude, stop.longitude, sequenceOrder, note, user.id, category],
     );
     await client.query('COMMIT');
     const [saved] = await findWaypoints(pool, tripId, user.id, inserted.rows[0].id);
@@ -904,7 +911,7 @@ type Queryable = Pick<typeof pool, 'query'>;
 /** A trip's stops in order, with vote counts and the vote of the user in `userId`. */
 async function findWaypoints(db: Queryable, tripId: string, userId: string, waypointId?: string) {
   const result = await db.query(
-    `SELECT w.id, w.trip_id, w.name, w.latitude, w.longitude, w.sequence_order, w.role, w.note,
+    `SELECT w.id, w.trip_id, w.name, w.latitude, w.longitude, w.sequence_order, w.role, w.note, w.category,
        u.name AS proposed_by, w.proposed_by AS proposed_by_id,
        (SELECT count(*) FROM waypoint_votes v WHERE v.waypoint_id = w.id AND v.vote = 'up') AS likes,
        (SELECT count(*) FROM waypoint_votes v WHERE v.waypoint_id = w.id AND v.vote = 'down') AS dislikes,
@@ -927,6 +934,7 @@ function waypointRow(row: {
   sequence_order: number | string;
   role: 'start' | 'end' | null;
   note: string;
+  category: string | null;
   proposed_by: string | null;
   proposed_by_id: string | null;
   likes: number | string;
@@ -942,6 +950,7 @@ function waypointRow(row: {
     sequence_order: Number(row.sequence_order),
     role: row.role,
     note: row.note,
+    category: row.category,
     proposed_by: row.proposed_by,
     proposed_by_id: row.proposed_by_id,
     likes: Number(row.likes),
