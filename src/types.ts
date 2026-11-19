@@ -8,6 +8,9 @@ export interface Crew {
   color: string;
 }
 
+/** What kind of place a stop is, which picks its picture. */
+export type StopCategory = 'food' | 'gas' | 'beach' | 'sights' | 'lodging';
+
 /** A trip's first and last stops, set on the Trip tab. */
 export type StopRole = 'start' | 'end';
 
@@ -23,6 +26,10 @@ export interface Waypoint {
   /** Optional note from whoever suggested the stop; shown in place of `detail`. */
   note?: string;
   proposedBy: string;
+  /** What kind of place it is, when known. */
+  category?: StopCategory;
+  /** The account id of whoever suggested the stop, when the server knows it. */
+  proposedById?: string;
   likes: number;
   dislikes: number;
   vote: Vote;

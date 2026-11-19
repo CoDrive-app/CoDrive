@@ -31,13 +31,6 @@ export function endpoint(trip: Trip, role: StopRole): Waypoint | undefined {
   return trip.waypoints.find((stop) => roleOf(stop) === role);
 }
 
-/** A route needs both a Start and an End to have been filled in. */
-export function hasEndpoints(trip: Trip) {
-  const start = endpoint(trip, 'start');
-  const end = endpoint(trip, 'end');
-  return Boolean(start && end && start.title.trim() && end.title.trim());
-}
-
 function setEndpoint(
   stops: Waypoint[],
   trip: Trip,

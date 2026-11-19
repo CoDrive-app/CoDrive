@@ -102,7 +102,13 @@ export function LogExpenseDialog({
           onSelect={(value) => onType(value as ExpenseType)}
           placeholder="Choose a type"
         />
-        <Field label="Item Name" value={name} onChangeText={onName} placeholder="Gas, dinner, stay" />
+        <Field
+          label="Item Name"
+          value={name}
+          onChangeText={onName}
+          // Left blank, the expense is named after its type, so the placeholder shows that name.
+          placeholder={type ? `${EXPENSE_TYPES.find((item) => item.value === type)?.label ?? 'Expense'} (optional)` : 'Optional, like dinner or stay'}
+        />
         <Field label="Amount" value={amount} onChangeText={onAmount} placeholder="45.00" numeric />
         <SelectField
           label="Paid by"

@@ -3,6 +3,7 @@ import { ActivityIndicator, BackHandler, Platform, StyleSheet, Text, View } from
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
+  addWaypoint,
   createTrip,
   currentUser,
   getTrip,
@@ -12,18 +13,26 @@ import {
   logExpense,
   onSessionEnded,
   removeTrip,
+  removeWaypoint,
   setAuthToken,
+  setStopRole,
   signOut,
+  updateTrip as saveTrip,
+  voteWaypoint,
   type AddressSuggestion,
   type ApiExpense,
   type ApiMember,
+  type ApiPlace,
   type ApiTrip,
+  type ApiTripDetail,
   type ApiUser,
+  type ApiWaypoint,
   type Spot,
 } from './src/api';
 import { MapBackdrop } from './src/components/MapBackdrop';
 import { TabBar } from './src/components/TabBar';
-import { IMG } from './src/data';
+import { IMG, imageFor } from './src/data';
+import { CATEGORY_COLORS } from './src/theme';
 import { formatIso, formatTripDates } from './src/dates';
 import { currentDrivers, formatLimit } from './src/drivers';
 import { EXPENSE_TYPES, orderPayers, payerOptions, togglePayer } from './src/expenses';
@@ -39,13 +48,15 @@ import { LogExpenseDialog } from './src/screens/LogExpenseDialog';
 import { PlanScreen } from './src/screens/PlanScreen';
 import { ProfileDialog } from './src/screens/ProfileDialog';
 import { RotationDialog } from './src/screens/RotationDialog';
+import { RemoveStopDialog } from './src/screens/RemoveStopDialog';
 import { StopNoteDialog } from './src/screens/StopNoteDialog';
 import { TripSettingsScreen, type TripSettings } from './src/screens/TripSettingsScreen';
 import { clearToken, loadToken, saveToken } from './src/session';
-import { applyEndpoints, spotFor, where } from './src/stops';
+import { isGuest } from './src/crew';
+import { endpoint, spotFor } from './src/stops';
 import { C } from './src/theme';
-import { castVote } from './src/votes';
-import type { Crew, Expense, ExpenseType, Tab, Trip } from './src/types';
+import { castVote, statusFor } from './src/votes';
+import type { Crew, Expense, ExpenseType, Tab, Trip, Waypoint } from './src/types';
 
 function expenseFromApi(row: ApiExpense): Expense {
   const type = EXPENSE_TYPES.some((item) => item.value === row.category) ? (row.category as ExpenseType) : 'other';
@@ -66,9 +77,9 @@ function expenseFromApi(row: ApiExpense): Expense {
 
 const CREW_COLORS = ['#E26D5A', '#3AA99A', '#E2B045', '#5B7CFA', '#8B6CC4'];
 
-/** A trip's crew is the accounts on it, in the order they joined. */
-function crewFromMembers(members: ApiMember[]): Crew[] {
-  return members.map((member, index) => ({
+/** A trip's crew is the accounts on it, in the order they joined, then anyone added by name. */
+function crewFromApi(members: ApiMember[], guests: ApiTrip['guests']): Crew[] {
+  return [...members, ...guests].map((member, index) => ({
     id: member.id,
     name: member.name,
     initial: member.name.trim().charAt(0).toUpperCase() || '?',
@@ -76,28 +87,94 @@ function crewFromMembers(members: ApiMember[]): Crew[] {
   }));
 }
 
-function tripFromApi(row: ApiTrip): Trip {
-  const created = new Date(row.created_at);
-  const dates = Number.isNaN(created.getTime())
-    ? 'Dates TBD'
-    : created.toLocaleDateString('en-US', { month: 'short', day: '2-digit', year: 'numeric' });
+const STOP_LOOKS = {
+  start: { detail: 'Start', image: IMG.coast, time: '9:00 AM', stop: 'Departure', pin: '#E26D5A' },
+  end: { detail: 'Destination', image: IMG.hills, time: '—', stop: 'Arrival', pin: '#5B7CFA' },
+  suggestion: { detail: 'Suggested stop', image: IMG.lake, time: '—', stop: 'New suggestion', pin: '#8B6CC4' },
+};
+
+/** `groupSize` is how many people on the trip can vote, which sets how many votes make a majority. */
+function stopFromApi(row: ApiWaypoint, groupSize: number): Waypoint {
+  const role = row.role ?? undefined;
+  return {
+    id: row.id,
+    title: row.name,
+    ...STOP_LOOKS[role ?? 'suggestion'],
+    // A picture of the kind of place it is, when known. Otherwise the start, end or suggestion picture.
+    image: imageFor(row.category, row.id) ?? STOP_LOOKS[role ?? 'suggestion'].image,
+    category: row.category ?? undefined,
+    // A stop of a known kind is drawn in that kind's colour, on the map and in the itinerary.
+    pin: row.category ? CATEGORY_COLORS[row.category] : STOP_LOOKS[role ?? 'suggestion'].pin,
+    note: row.note || undefined,
+    proposedBy: row.proposed_by ?? 'Someone',
+    proposedById: row.proposed_by_id ?? undefined,
+    likes: row.likes,
+    dislikes: row.dislikes,
+    vote: row.my_vote,
+    // Start and End are always on the route. Other stops follow the crew's majority vote.
+    status: role ? 'selected' : statusFor(row.likes, row.dislikes, groupSize),
+    ...(row.latitude !== null && row.longitude !== null ? { latitude: row.latitude, longitude: row.longitude } : {}),
+    role,
+  };
+}
+
+/** Start first, End last, and suggestions in the order they were added. */
+/** Only people with an account can vote, so only they count toward a majority. People added by name don't. */
+function voterCount(crew: Crew[]) {
+  return crew.filter((member) => !isGuest(member)).length;
+}
+
+function stopsFromApi(rows: ApiWaypoint[], groupSize: number): Waypoint[] {
+  const rank = (row: ApiWaypoint) => (row.role === 'start' ? 0 : row.role === 'end' ? 2 : 1);
+  return [...rows].sort((a, b) => rank(a) - rank(b) || a.sequence_order - b.sequence_order).map((row) => stopFromApi(row, groupSize));
+}
+
+function datesText(start: string | null, end: string | null) {
+  if (start && end) return formatTripDates(start, end);
+  if (start) return formatIso(start);
+  if (end) return `Until ${formatIso(end)}`;
+  return 'Dates TBD';
+}
+
+/** The trip as the server has it. The trip list leaves out stops and expenses; `getTrip` fills them in. */
+function tripFromApi(row: ApiTrip | ApiTripDetail): Trip {
+  const crew = crewFromApi(row.members, row.guests);
+  const waypoints = 'waypoints' in row ? stopsFromApi(row.waypoints, voterCount(crew)) : [];
+  const start = waypoints.find((stop) => stop.role === 'start')?.title;
+  const end = waypoints.find((stop) => stop.role === 'end')?.title;
   return {
     id: row.id,
     shareCode: row.share_code,
     role: row.role,
     title: row.title,
     routeName: row.title,
-    dates,
-    image: IMG.road,
-    crew: crewFromMembers(row.members),
-    waypoints: [],
-    expenses: [],
+    dates: datesText(row.start_date, row.end_date),
+    startDate: row.start_date ?? undefined,
+    endDate: row.end_date ?? undefined,
+    image: row.image ?? IMG.road,
+    crew,
+    waypoints,
+    expenses: 'expenses' in row ? row.expenses.map(expenseFromApi) : [],
     budget: Number(row.budget) > 0 ? Number(row.budget) : 0,
-    drivers: [],
+    drivers: row.drivers,
     duration: '—',
-    leg: row.title,
+    leg: start && end ? `${start} to ${end}` : 'Select at least two stops on the Plan tab',
     rest: { place: 'Nearest safe pull-off', distance: '—', note: 'We’ll mark it once you’re moving' },
   };
+}
+
+function placeFor(name: string, spot: Spot | null): ApiPlace | null {
+  if (!name) return null;
+  return spot ? { name, latitude: spot.latitude, longitude: spot.longitude } : { name };
+}
+
+/** `{ start: place }` when the fixed Start (or End) changed, null when it was turned off, or nothing if it is the same. */
+function endpointChange(trip: Trip, role: 'start' | 'end', next: ApiPlace | null): { start?: ApiPlace | null; end?: ApiPlace | null } {
+  const current = endpoint(trip, role);
+  const same = current
+    ? next !== null && current.title === next.name && current.latitude === next.latitude && current.longitude === next.longitude
+    : next === null;
+  return same ? {} : { [role]: next };
 }
 
 function CoDrive({ user, onSignOut }: { user: ApiUser; onSignOut: () => void }) {
@@ -122,6 +199,14 @@ function CoDrive({ user, onSignOut }: { user: ApiUser; onSignOut: () => void }) 
   const [draftStop, setDraftStop] = useState('');
   const [noteOpen, setNoteOpen] = useState(false);
   const [stopNote, setStopNote] = useState('');
+  const [addingStop, setAddingStop] = useState(false);
+  const [stopError, setStopError] = useState<string | null>(null);
+  // The stop waiting for "Are you sure?" before it is removed.
+  const [removeId, setRemoveId] = useState<string | null>(null);
+  const [removing, setRemoving] = useState(false);
+  const [removeError, setRemoveError] = useState<string | null>(null);
+  const [roleBusy, setRoleBusy] = useState(false);
+  const [roleError, setRoleError] = useState<string | null>(null);
   const [tripName, setTripName] = useState('');
   const [draftPlace, setDraftPlace] = useState<Spot | null>(null);
   const [expenseType, setExpenseType] = useState<ExpenseType | null>(null);
@@ -161,20 +246,15 @@ function CoDrive({ user, onSignOut }: { user: ApiUser; onSignOut: () => void }) 
     };
   }, []);
 
+  // The trip list has no stops or expenses, so load the open trip in full, and again on each tab
+  // so changes from the rest of the crew show up.
   const tripId = trip?.id;
   useEffect(() => {
-    if (tab !== 'costs' || !tripId || !isServerTrip(tripId)) return;
+    if (!tripId || !isServerTrip(tripId)) return;
     let active = true;
     getTrip(tripId)
       .then((saved) => {
-        if (!active) return;
-        setTrips((current) =>
-          current.map((item) =>
-            item.id === tripId
-              ? { ...item, crew: crewFromMembers(saved.members), expenses: saved.expenses.map(expenseFromApi) }
-              : item,
-          ),
-        );
+        if (active) setTrips((current) => current.map((item) => (item.id === tripId ? tripFromApi(saved) : item)));
       })
       .catch(() => undefined);
     return () => {
@@ -184,6 +264,10 @@ function CoDrive({ user, onSignOut }: { user: ApiUser; onSignOut: () => void }) 
 
   useEffect(() => {
     const sub = BackHandler.addEventListener('hardwareBackPress', () => {
+      if (removeId) {
+        setRemoveId(null);
+        return true;
+      }
       if (noteOpen) {
         setNoteOpen(false);
         return true;
@@ -223,7 +307,7 @@ function CoDrive({ user, onSignOut }: { user: ApiUser; onSignOut: () => void }) 
       return false;
     });
     return () => sub.remove();
-  }, [noteOpen, inviteOpen, rotationOpen, connectionOpen, createOpen, joinOpen, expenseOpen, profileOpen, tab]);
+  }, [removeId, noteOpen, inviteOpen, rotationOpen, connectionOpen, createOpen, joinOpen, expenseOpen, profileOpen, tab]);
 
   const updateTrip = (id: string, recipe: (current: Trip) => Trip) => {
     setTrips((current) => current.map((item) => (item.id === id ? recipe(item) : item)));
@@ -275,7 +359,6 @@ function CoDrive({ user, onSignOut }: { user: ApiUser; onSignOut: () => void }) 
   const expenseReady =
     expenseType !== null &&
     activePayers.length > 0 &&
-    expenseName.trim().length > 0 &&
     !Number.isNaN(amountValue) &&
     amountValue > 0;
 
@@ -315,8 +398,7 @@ function CoDrive({ user, onSignOut }: { user: ApiUser; onSignOut: () => void }) 
     }
 
     const id = created.id;
-    const next: Trip = { ...tripFromApi(created), dates: 'Dates TBD', leg: 'Add a start and end on the Trip tab' };
-    setTrips((current) => [next, ...current]);
+    setTrips((current) => [tripFromApi(created), ...current]);
     setSelectedId(id);
     setTripName('');
     setCreating(false);
@@ -324,87 +406,134 @@ function CoDrive({ user, onSignOut }: { user: ApiUser; onSignOut: () => void }) 
     setInviteOpen(true);
   };
 
-  const saveSettings = (settings: TripSettings) => {
+  /** Saves the Trip tab on the server. Throws if the save fails, so the form can say so. */
+  const saveSettings = async (settings: TripSettings) => {
     if (!trip) return;
-    updateTrip(trip.id, (current) => {
-      const dates =
-        settings.startDate && settings.endDate
-          ? formatTripDates(settings.startDate, settings.endDate)
-          : settings.startDate
-            ? formatIso(settings.startDate)
-            : settings.endDate
-              ? `Until ${formatIso(settings.endDate)}`
-              : 'Dates TBD';
-      return {
-        ...current,
-        title: settings.title,
-        routeName: current.routeName === current.title ? settings.title : current.routeName,
-        dates,
-        startDate: settings.startDate || undefined,
-        endDate: settings.endDate || undefined,
-        budget: settings.budget,
-        image: settings.image,
-        drivers: settings.drivers,
-        leg: settings.start && settings.end ? `${settings.start} to ${settings.end}` : current.leg,
-        waypoints: applyEndpoints(current, settings.start, settings.end, settings.startSpot, settings.endSpot),
-      };
+    const accounts = new Set(trip.crew.filter((member) => !isGuest(member)).map((member) => member.id));
+    // Only the owner can change the trip's settings. Anyone else saves just their own driver setting.
+    const saved = trip.role !== 'owner' ? await saveTrip(trip.id, { drivers: settings.drivers }) : await saveTrip(trip.id, {
+      title: settings.title,
+      budget: settings.budget > 0 ? settings.budget : null,
+      start_date: settings.startDate || null,
+      end_date: settings.endDate || null,
+      // Pictures can be megabytes, so only send one that changed.
+      ...(settings.image !== trip.image ? { image: settings.image } : {}),
+      drivers: settings.drivers,
+      guests: settings.crew
+        .filter((member) => !accounts.has(member.id))
+        .map((member) => ({ id: member.id, name: member.name })),
+      // Only the owner can change the start and end, so they are only sent when they changed.
+      ...endpointChange(trip, 'start', settings.fixedStart ? placeFor(settings.start, settings.startSpot) : null),
+      ...endpointChange(trip, 'end', settings.fixedEnd ? placeFor(settings.end, settings.endSpot) : null),
     });
-  };
-
-  const requestStop = () => {
-    if (!draftStop.trim() || !trip) return;
-    setStopNote('');
-    setNoteOpen(true);
+    updateTrip(trip.id, () => tripFromApi(saved));
   };
 
   const pickPlace = (place: AddressSuggestion) => {
     setDraftStop(place.name);
-    setDraftPlace({ name: place.name, latitude: place.latitude, longitude: place.longitude });
+    setDraftPlace({ name: place.name, latitude: place.latitude, longitude: place.longitude, category: place.category });
     setStopNote('');
+    setStopError(null);
     setNoteOpen(true);
   };
 
-  const addStop = () => {
+  const addStop = async () => {
     const title = draftStop.trim();
-    if (!title || !trip) return;
-    const note = stopNote.trim();
+    if (!title || !trip || addingStop) return;
+    // Only a place picked from the suggestions can be a stop, so it always has a location for the route.
     const spot = spotFor(title, draftPlace);
+    if (!spot) {
+      setStopError('Pick the place from the suggestions first.');
+      return;
+    }
     const tripId = trip.id;
-    const localId = Date.now().toString();
-    updateTrip(tripId, (current) => ({
-      ...current,
-      waypoints: [
-        ...current.waypoints,
-        {
-          id: localId,
-          title,
-          detail: 'Suggested stop',
-          note: note || undefined,
-          proposedBy: user.name,
-          likes: 0,
-          dislikes: 0,
-          vote: null,
-          image: IMG.lake,
-          time: '—',
-          stop: 'New suggestion',
-          pin: '#8B6CC4',
-          status: 'suggested',
-          ...where(spot),
-        },
-      ],
-    }));
+    setAddingStop(true);
+    setStopError(null);
+    try {
+      const saved = await addWaypoint(tripId, {
+        ...placeFor(title, spot)!,
+        category: spot.category ?? null,
+        note: stopNote.trim(),
+      });
+      // New suggestions go before the End, where they will be after a reload.
+      updateTrip(tripId, (current) => {
+        const end = current.waypoints.filter((stop) => stop.role === 'end');
+        const rest = current.waypoints.filter((stop) => stop.role !== 'end');
+        return { ...current, waypoints: [...rest, stopFromApi(saved, voterCount(current.crew)), ...end] };
+      });
+    } catch (error) {
+      setStopError(error instanceof Error ? error.message : 'Could not add the stop');
+      return;
+    } finally {
+      setAddingStop(false);
+    }
     setDraftStop('');
     setDraftPlace(null);
     setStopNote('');
     setNoteOpen(false);
   };
 
+  /** Shows the vote straight away, then keeps the server's counts, or puts the stop back if the vote did not save. */
   const vote = (id: string, direction: 'up' | 'down') => {
     if (!trip) return;
-    updateTrip(trip.id, (current) => ({
-      ...current,
-      waypoints: current.waypoints.map((stop) => (stop.id === id ? castVote(stop, direction) : stop)),
-    }));
+    const tripId = trip.id;
+    const before = trip.waypoints.find((stop) => stop.id === id);
+    if (!before) return;
+    const groupSize = voterCount(trip.crew);
+    const after = castVote(before, direction, groupSize);
+    const replace = (next: Waypoint) =>
+      updateTrip(tripId, (current) => ({
+        ...current,
+        waypoints: current.waypoints.map((stop) => (stop.id === id ? next : stop)),
+      }));
+    replace(before.role ? { ...after, status: 'selected' } : after);
+    voteWaypoint(tripId, id, after.vote)
+      .then((saved) => replace(stopFromApi(saved, groupSize)))
+      .catch(() => replace(before));
+  };
+
+  const removeStop = removeId ? trip?.waypoints.find((stop) => stop.id === removeId) : undefined;
+
+  /** Makes a stop the fixed Start or End, or turns that off if it already is. Only the owner sees the buttons. */
+  const toggleRole = async (id: string, role: 'start' | 'end') => {
+    if (!trip || roleBusy) return;
+    const tripId = trip.id;
+    const stop = trip.waypoints.find((item) => item.id === id);
+    if (!stop) return;
+    setRoleBusy(true);
+    setRoleError(null);
+    try {
+      const saved = await setStopRole(tripId, id, stop.role === role ? null : role);
+      updateTrip(tripId, () => tripFromApi(saved));
+    } catch (error) {
+      setRoleError(error instanceof Error ? error.message : 'Could not change the start or end');
+    } finally {
+      setRoleBusy(false);
+    }
+  };
+
+  const askRemove = (id: string) => {
+    setRemoveError(null);
+    setRemoveId(id);
+  };
+
+  /** Removes the stop on the server first, so it only leaves the list once it is really gone. */
+  const confirmRemove = async () => {
+    if (!trip || !removeId || removing) return;
+    const tripId = trip.id;
+    const id = removeId;
+    setRemoving(true);
+    setRemoveError(null);
+    try {
+      await removeWaypoint(tripId, id);
+    } catch (error) {
+      setRemoveError(error instanceof Error ? error.message : 'Could not remove the stop');
+      return;
+    } finally {
+      setRemoving(false);
+    }
+    updateTrip(tripId, (current) => ({ ...current, waypoints: current.waypoints.filter((stop) => stop.id !== id) }));
+    setRemoveId(null);
   };
 
   const handleLog = async () => {
@@ -413,6 +542,8 @@ function CoDrive({ user, onSignOut }: { user: ApiUser; onSignOut: () => void }) 
     const notes = expenseNotes.trim();
     const paidBy = orderPayers(activePayers, payers);
     const category = expenseType;
+    // A blank name falls back to the type, like "Gas".
+    const title = expenseName.trim() || (EXPENSE_TYPES.find((item) => item.value === category)?.label ?? 'Expense');
     let expenseId = Date.now().toString();
 
     if (isServerTrip(trip.id)) {
@@ -423,7 +554,7 @@ function CoDrive({ user, onSignOut }: { user: ApiUser; onSignOut: () => void }) 
           paid_by_user: paidBy.join(', '),
           amount: amountValue,
           category,
-          title: expenseName.trim(),
+          title,
           description: notes,
           photos: expensePhotos,
         });
@@ -441,7 +572,7 @@ function CoDrive({ user, onSignOut }: { user: ApiUser; onSignOut: () => void }) 
       expenses: [
         {
           id: expenseId,
-          title: expenseName.trim(),
+          title,
           paidBy,
           notes,
           amount: amountValue,
@@ -494,15 +625,19 @@ function CoDrive({ user, onSignOut }: { user: ApiUser; onSignOut: () => void }) 
                 <Text style={styles.emptyTabText}>Start a trip from Home to plan, drive, and split costs.</Text>
               </View>
             ) : null}
-            {tab === 'trip' && trip ? <TripSettingsScreen key={`${trip.id}-${settingsFocus ?? ''}`} trip={trip} onSave={saveSettings} focus={settingsFocus ?? undefined} /> : null}
+            {tab === 'trip' && trip ? <TripSettingsScreen key={`${trip.id}-${settingsFocus ?? ''}`} trip={trip} userId={user.id} onSave={saveSettings} focus={settingsFocus ?? undefined} /> : null}
             {tab === 'plan' && trip ? (
               <PlanScreen
                 trip={trip}
                 draft={draftStop}
                 onDraft={setDraftStop}
-                onAdd={requestStop}
                 onPickPlace={pickPlace}
                 onVote={vote}
+                onRemove={askRemove}
+                onSetRole={toggleRole}
+                roleBusy={roleBusy}
+                notice={roleError}
+                userId={user.id}
                 onInvite={() => setInviteOpen(true)}
               />
             ) : null}
@@ -617,6 +752,19 @@ function CoDrive({ user, onSignOut }: { user: ApiUser; onSignOut: () => void }) 
           />
         ) : null}
 
+        {removeStop && trip ? (
+          <RemoveStopDialog
+            stopTitle={removeStop.title}
+            kind={removeStop.role ?? 'suggestion'}
+            // The owner removing someone else's suggestion is told whose it is.
+            suggestedBy={!removeStop.role && removeStop.proposedById !== user.id ? removeStop.proposedBy : undefined}
+            onConfirm={confirmRemove}
+            onClose={() => setRemoveId(null)}
+            submitting={removing}
+            error={removeError}
+          />
+        ) : null}
+
         {noteOpen && trip ? (
           <StopNoteDialog
             stopTitle={draftStop.trim()}
@@ -624,6 +772,8 @@ function CoDrive({ user, onSignOut }: { user: ApiUser; onSignOut: () => void }) 
             onNote={setStopNote}
             onConfirm={addStop}
             onClose={() => setNoteOpen(false)}
+            submitting={addingStop}
+            error={stopError}
           />
         ) : null}
 

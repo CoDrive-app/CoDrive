@@ -1,7 +1,7 @@
 import { useState } from 'react';
-import { ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { LayoutAnimation, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
-import { C, layout } from '../theme';
+import { C, CATEGORY_COLORS, layout } from '../theme';
 import type { Trip } from '../types';
 import { BottomSheet } from '../components/BottomSheet';
 import { StopCard } from '../components/StopCard';
@@ -11,8 +11,8 @@ import { legAt, OFF_ROUTE_METERS, progressAlong } from '../progress';
 import { useCarPosition } from '../useCarPosition';
 import { currentDrivers } from '../drivers';
 import { driverAt, planDriverLegs, sectionsFor } from '../driverLegs';
-import { hasEndpoints } from '../stops';
 import { useRoute } from '../useRoute';
+import { QUICK_PREVIEW, QuickStopDialog, type QuickKind } from './QuickStopDialog';
 
 export function DriveScreen({
   trip,
@@ -29,8 +29,22 @@ export function DriveScreen({
 }) {
   const [height, setHeight] = useState(0);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  // The route progress box starts minimized, so the map stays clear until someone wants it.
+  const [progressOpen, setProgressOpen] = useState(false);
+  // Preview of the Find Gas / Food / Rest buttons: which example pop-up is open, and a note after choosing Add.
+  const [quick, setQuick] = useState<QuickKind | null>(null);
+  const [quickNote, setQuickNote] = useState<string | null>(null);
+  const chooseQuick = () => {
+    if (!quick) return;
+    setQuickNote(QUICK_PREVIEW[quick].offRoute ? 'Preview: the owner would be asked to approve it.' : 'Preview: it would be added to the route.');
+    setQuick(null);
+    setTimeout(() => setQuickNote(null), 3000);
+  };
+  const showProgress = (open: boolean) => {
+    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+    setProgressOpen(open);
+  };
   const drivers = currentDrivers(trip);
-  const ready = hasEndpoints(trip);
   const stops = routedStops(trip);
   const { plan, failed, loading } = useRoute(stops);
   const itinerary = drivingStops(trip);
@@ -47,9 +61,7 @@ export function DriveScreen({
       ? failed
         ? 'Route unavailable'
         : 'Finding the route…'
-      : ready
-        ? 'Select 2 stops with locations to track progress'
-        : 'Add a start and end to build the route'
+      : 'Select 2 stops on the Plan tab to build the route'
     : locationStatus === 'denied'
       ? 'Allow location to track progress'
       : locationStatus === 'unavailable'
@@ -67,11 +79,9 @@ export function DriveScreen({
       ? `Current leg: ${legStart.title} to ${legEnd.title}${plan ? ` · ${miles(plan.legs[legIndex]?.distanceMeters ?? plan.distanceMeters)}` : ''}${
           loading ? ' · finding the route…' : failed ? ' · route unavailable, showing a straight line' : ''
         }`
-      : !ready
-        ? 'Add a start and end on the Trip tab to build the route.'
-        : itinerary.length === 0
-          ? 'No stops selected yet. Give a stop a thumbs up on the Plan tab.'
-          : trip.leg;
+      : stops.length < 2
+        ? 'Select at least two stops with a location on the Plan tab to build the route.'
+        : trip.leg;
   const timings = plan ? schedule(stops, plan.legs) : null;
 
   // With more than one driver, the route is split into a stretch for each, in the crew's colours.
@@ -124,10 +134,10 @@ export function DriveScreen({
             <MaterialCommunityIcons name="steering" size={18} color={C.orange} />
           </TouchableOpacity>
         </View>
-        {note ? (
-          <View style={styles.note}>
-            <Text style={styles.noteText} numberOfLines={1}>
-              {note}
+        {quickNote ?? note ? (
+          <View style={[styles.note, quickNote ? styles.noteWide : null]}>
+            <Text style={styles.noteText} numberOfLines={2}>
+              {quickNote ?? note}
             </Text>
           </View>
         ) : null}
@@ -139,9 +149,31 @@ export function DriveScreen({
             onClose={() => setSelectedId(null)}
           />
         ) : null}
-        {!fullMap && !selected ? (
+        {!fullMap && !selected && !progressOpen ? (
+          // Sits just above the itinerary panel, so it moves with the panel when the panel is dragged.
+          <TouchableOpacity
+            style={styles.progressPill}
+            onPress={() => showProgress(true)}
+            activeOpacity={0.85}
+            accessibilityRole="button"
+            accessibilityLabel="See route progress"
+          >
+            <Text style={styles.progressPillText}>See Route Progress</Text>
+            <MaterialCommunityIcons name="chevron-up" size={18} color={C.white} />
+          </TouchableOpacity>
+        ) : null}
+        {!fullMap && !selected && progressOpen ? (
           <View style={styles.routing}>
-            <Text style={styles.routingTitle}>Routing {trip.routeName}</Text>
+            <TouchableOpacity
+              style={styles.minimize}
+              onPress={() => showProgress(false)}
+              hitSlop={10}
+              accessibilityRole="button"
+              accessibilityLabel="Minimize route progress"
+            >
+              <MaterialCommunityIcons name="chevron-down" size={22} color="rgba(255,255,255,0.85)" />
+            </TouchableOpacity>
+            <Text style={[styles.routingTitle, styles.routingTitleRoom]}>Routing {trip.routeName}</Text>
             <Text style={styles.routingLeg}>{legLine}</Text>
             {driverLegs.length > 1 ? (
               <View style={styles.legend}>
@@ -165,6 +197,22 @@ export function DriveScreen({
 
       {!fullMap ? (
         <BottomSheet title="Today's Itinerary" containerHeight={height}>
+          <View style={styles.quickRow}>
+            {(Object.keys(QUICK_PREVIEW) as QuickKind[]).map((kind) => {
+              const color = CATEGORY_COLORS[QUICK_PREVIEW[kind].category];
+              return (
+                <TouchableOpacity
+                  key={kind}
+                  style={[styles.quickChip, { backgroundColor: `${color}1F` }]}
+                  onPress={() => setQuick(kind)}
+                  activeOpacity={0.8}
+                  accessibilityRole="button"
+                >
+                  <Text style={[styles.quickText, { color }]}>{QUICK_PREVIEW[kind].label}</Text>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
           <ScrollView style={layout.fill} contentContainerStyle={styles.itinerary} showsVerticalScrollIndicator={false}>
             {itinerary.map((stop, index) => (
               <View key={stop.id} style={styles.row}>
@@ -175,7 +223,7 @@ export function DriveScreen({
                 <View style={styles.copy}>
                   <Text style={styles.stopTitle}>{stop.title}</Text>
                   <Text style={styles.stopMeta}>
-                    {stop.stop}
+                    {stop.id === stops[0]?.id ? 'Departure' : stop.id === stops[stops.length - 1]?.id ? 'Arrival' : stop.stop}
                     {timings?.get(stop.id)?.legMeters ? ` · ${miles(timings.get(stop.id)?.legMeters ?? 0)} from the last stop` : ''}
                   </Text>
                 </View>
@@ -191,6 +239,7 @@ export function DriveScreen({
           </View>
         </BottomSheet>
       ) : null}
+      {quick ? <QuickStopDialog kind={quick} onAdd={chooseQuick} onClose={() => setQuick(null)} /> : null}
     </View>
   );
 }
@@ -263,6 +312,54 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     paddingHorizontal: 14,
     paddingVertical: 12,
+  },
+  quickRow: {
+    flexDirection: 'row',
+    gap: 8,
+    marginBottom: 12,
+  },
+  quickChip: {
+    height: 32,
+    paddingHorizontal: 14,
+    borderRadius: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  quickText: {
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  noteWide: {
+    maxWidth: 260,
+  },
+  progressPill: {
+    position: 'absolute',
+    bottom: 36,
+    alignSelf: 'center',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingLeft: 16,
+    paddingRight: 12,
+    paddingVertical: 9,
+    borderRadius: 999,
+    backgroundColor: 'rgba(27, 49, 41, 0.72)',
+  },
+  progressPillText: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: C.white,
+  },
+  minimize: {
+    position: 'absolute',
+    top: 8,
+    right: 8,
+    zIndex: 1,
+    padding: 2,
+  },
+  routingTitleRoom: {
+    // Leaves room for the minimize arrow in the corner.
+    marginRight: 28,
   },
   routingTitle: {
     fontSize: 16,

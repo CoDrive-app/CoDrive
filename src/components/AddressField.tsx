@@ -8,8 +8,8 @@ const MIN_CHARS = 3;
 const PAUSE_MS = 350;
 
 /**
- * A text field that suggests real addresses and places as you type. It always stays free text:
- * if search is unavailable you can still type anything and carry on.
+ * A text field that suggests real addresses and places as you type. Only a picked suggestion counts as a place:
+ * pressing Done picks the top one, waiting for it if the search is still running, and a check mark shows once picked.
  */
 export function AddressField({
   label,
@@ -17,6 +17,8 @@ export function AddressField({
   onChangeText,
   placeholder,
   onPick,
+  picked,
+  onFocus,
 }: {
   label: string;
   value: string;
@@ -24,11 +26,17 @@ export function AddressField({
   placeholder: string;
   /** Called with the chosen suggestion, including its coordinates. */
   onPick?: (item: AddressSuggestion) => void;
+  /** True while the text is a place picked from the suggestions. */
+  picked?: boolean;
+  /** Lets the screen scroll the field above the keyboard. */
+  onFocus?: () => void;
 }) {
   const [results, setResults] = useState<AddressSuggestion[]>([]);
   const [loading, setLoading] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Set when Done was pressed before the search came back, so the top result is picked as soon as it arrives.
+  const pickWhenReady = useRef(false);
   // Bumped whenever a search starts or is cancelled, so late answers from older searches are ignored.
   const latest = useRef(0);
 
@@ -42,6 +50,7 @@ export function AddressField({
 
   const change = (next: string) => {
     onChangeText(next);
+    pickWhenReady.current = false;
     if (timer.current) clearTimeout(timer.current);
     latest.current += 1;
 
@@ -59,8 +68,13 @@ export function AddressField({
       try {
         const found = await searchAddresses(query);
         if (ticket !== latest.current) return;
+        if (pickWhenReady.current && found.results.length > 0) {
+          pick(found.results[0]);
+          return;
+        }
         setResults(found.results);
-        setProblem(null);
+        setProblem(pickWhenReady.current || found.results.length === 0 ? 'No places found. Try another name.' : null);
+        pickWhenReady.current = false;
       } catch (error) {
         if (ticket !== latest.current) return;
         setResults([]);
@@ -72,6 +86,7 @@ export function AddressField({
   };
 
   const pick = (item: AddressSuggestion) => {
+    pickWhenReady.current = false;
     if (timer.current) clearTimeout(timer.current);
     latest.current += 1;
     setResults([]);
@@ -81,9 +96,26 @@ export function AddressField({
     onPick?.(item);
   };
 
+  /** Done on the keyboard: take the top suggestion, or wait for it if the search is still going. */
+  const submit = () => {
+    if (results.length > 0 && !loading) {
+      pick(results[0]);
+      return;
+    }
+    if (loading) {
+      pickWhenReady.current = true;
+      return;
+    }
+    if (!picked) {
+      setProblem(value.trim().length < MIN_CHARS ? `Type at least ${MIN_CHARS} letters, then pick a place from the list.` : 'No places found. Try another name.');
+    }
+  };
+
   // Wait a moment before closing the list, so a tap on a suggestion is not lost to the field losing focus.
   const closeSoon = () => {
     setTimeout(() => {
+      // Done closes the keyboard too; a search still finishing for Done must not be cancelled by that.
+      if (pickWhenReady.current) return;
       if (timer.current) clearTimeout(timer.current);
       latest.current += 1;
       setResults([]);
@@ -99,12 +131,19 @@ export function AddressField({
           value={value}
           onChangeText={change}
           onBlur={closeSoon}
+          onFocus={onFocus}
+          onSubmitEditing={submit}
+          returnKeyType="done"
           placeholder={placeholder}
           placeholderTextColor={C.faint}
           autoCorrect={false}
           style={styles.input}
         />
-        {loading ? <ActivityIndicator size="small" color={C.teal} style={styles.spinner} /> : null}
+        {loading ? (
+          <ActivityIndicator size="small" color={C.teal} style={styles.spinner} />
+        ) : picked && value.trim() ? (
+          <Ionicons name="checkmark-circle" size={20} color={C.teal} style={styles.spinner} accessibilityLabel="Place picked" />
+        ) : null}
       </View>
 
       {results.length > 0 ? (

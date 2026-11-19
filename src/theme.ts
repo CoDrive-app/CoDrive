@@ -1,3 +1,4 @@
+import type { StopCategory } from './types';
 import { StyleSheet, type ViewStyle } from 'react-native';
 
 export const C = {
@@ -14,6 +15,18 @@ export const C = {
   rest: '#F1EEE8',
   map: '#D7E6C6',
   field: '#F6F3EE',
+};
+
+/**
+ * One colour per kind of stop, used for the category chips, the outline of stop cards and the map pins.
+ * Chosen to stay clear of the crew colours, which mark drivers on the route.
+ */
+export const CATEGORY_COLORS: Record<StopCategory, string> = {
+  food: '#F2711C',
+  gas: '#C2185B',
+  beach: '#0096D6',
+  sights: '#3E9B47',
+  lodging: '#8D6E63',
 };
 
 export const cardShadow: ViewStyle = {

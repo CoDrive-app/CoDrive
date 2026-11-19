@@ -38,6 +38,32 @@ export type ApiTrip = {
   /** Your role on this trip. The owner can delete it; members can leave it. */
   role: 'owner' | 'member';
   members: ApiMember[];
+  /** YYYY-MM-DD, or null when not set. */
+  start_date: string | null;
+  end_date: string | null;
+  /** An https URL or an image data URL. null means the default picture. */
+  image: string | null;
+  drivers: { crewId: string; limitMinutes: number }[];
+  /** Crew members without an account. */
+  guests: { id: string; name: string }[];
+};
+
+export type ApiTripDetail = ApiTrip & { waypoints: ApiWaypoint[]; expenses: ApiExpense[] };
+
+export type ApiPlace = { name: string; latitude?: number; longitude?: number };
+
+/** Fields for `updateTrip`. Leave one out to keep it as it is. */
+export type TripPatch = {
+  title?: string;
+  budget?: number | null;
+  start_date?: string | null;
+  end_date?: string | null;
+  image?: string | null;
+  drivers?: ApiTrip['drivers'];
+  guests?: ApiTrip['guests'];
+  /** null removes the stop. */
+  start?: ApiPlace | null;
+  end?: ApiPlace | null;
 };
 
 let authToken: string | null = null;
@@ -79,9 +105,20 @@ export type ApiWaypoint = {
   id: string;
   trip_id: string;
   name: string;
-  latitude: number;
-  longitude: number;
+  latitude: number | null;
+  longitude: number | null;
   sequence_order: number;
+  role: 'start' | 'end' | null;
+  note: string;
+  /** What kind of place it is, or null when unknown. */
+  category: PlaceKind | null;
+  /** The name of whoever suggested it, or null if their account is gone. */
+  proposed_by: string | null;
+  /** The account id of whoever suggested it, so the app knows whose suggestion it is. */
+  proposed_by_id: string | null;
+  likes: number;
+  dislikes: number;
+  my_vote: 'up' | 'down' | null;
 };
 
 export type ApiExpense = {
@@ -105,9 +142,11 @@ export type AddressSuggestion = {
   label: string;
   latitude: number;
   longitude: number;
+  /** What kind of place it is, when Geoapify says it is one the app has pictures for. */
+  category: PlaceKind | null;
 };
 
-export type Spot = { name: string; latitude: number; longitude: number };
+export type Spot = { name: string; latitude: number; longitude: number; category?: PlaceKind | null };
 
 /** Asks the CoDrive API for address suggestions. The API holds the Geoapify key, not the app. */
 export function searchAddresses(text: string, near?: { latitude: number; longitude: number } | null) {
@@ -150,7 +189,29 @@ export function listTrips() {
 }
 
 export function getTrip(id: string) {
-  return request<ApiTrip & { waypoints: ApiWaypoint[]; expenses: ApiExpense[] }>(`/api/trips/${id}`);
+  return request<ApiTripDetail>(`/api/trips/${id}`);
+}
+
+export function updateTrip(id: string, patch: TripPatch) {
+  return request<ApiTripDetail>(`/api/trips/${id}`, {
+    method: 'PATCH',
+    body: JSON.stringify(patch),
+  });
+}
+
+/** Makes a stop the fixed Start or End, or null to stop it being one. Only the trip owner can. */
+export function setStopRole(tripId: string, waypointId: string, role: 'start' | 'end' | null) {
+  return request<ApiTripDetail>(`/api/trips/${tripId}/waypoints/${waypointId}/role`, {
+    method: 'PUT',
+    body: JSON.stringify({ role }),
+  });
+}
+
+export function voteWaypoint(tripId: string, waypointId: string, vote: 'up' | 'down' | null) {
+  return request<ApiWaypoint>(`/api/trips/${tripId}/waypoints/${waypointId}/vote`, {
+    method: 'PUT',
+    body: JSON.stringify({ vote }),
+  });
 }
 
 export function createTrip(title: string, budget?: number) {
@@ -167,6 +228,11 @@ export function joinTrip(shareCode: string) {
   });
 }
 
+/** Removes a stop and its votes for everyone on the trip. Only your own suggestions, unless you own the trip. */
+export function removeWaypoint(tripId: string, waypointId: string) {
+  return request<void>(`/api/trips/${tripId}/waypoints/${waypointId}`, { method: 'DELETE' });
+}
+
 /** Deletes the trip if you own it, or takes you off it if you joined it. */
 export function removeTrip(id: string) {
   return request<void>(`/api/trips/${id}`, { method: 'DELETE' });
@@ -174,7 +240,7 @@ export function removeTrip(id: string) {
 
 export function addWaypoint(
   tripId: string,
-  stop: { name: string; latitude: number; longitude: number; sequence_order?: number },
+  stop: ApiPlace & { note?: string; sequence_order?: number; category?: PlaceKind | null },
 ) {
   return request<ApiWaypoint>(`/api/trips/${tripId}/waypoints`, {
     method: 'POST',

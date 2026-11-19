@@ -2,7 +2,12 @@
 
 CoDrive is a mobile-first road-trip app for planning a route with your crew, rotating drivers, and splitting costs. It runs in Expo Go and in the browser.
 
+`main` is the version we showcase and host. Branch, push, and merge using [CONTRIBUTING.md](CONTRIBUTING.md).
+
 ## Run
+
+start.sh is created to run all needed commands automatically
+Just run ./start.sh in terminal to run them all. Ensure docker is open.
 
 ```bash
 npm install
@@ -19,16 +24,16 @@ npm start
 - **Accounts.** Sign in, or create an account with a name, email and password. You only ever see trips you started or joined. Sign out from the profile picture on Home.
 - **Home.** Start a trip with just a name, or join someone's trip with its share code. Open an expedition, tap the pencil to open its Trip tab, or tap the X to delete it (the owner deletes it for everyone; anyone else just leaves it). The profile picture starts as an anonymous icon; tap it to choose a photo or switch back.
 - **Invite.** After you create a trip, share its code. Friends sign in, tap Join with a Code, and enter it.
-- **Trip.** Set the start and end, dates, budget and picture, and choose which crew members can drive and for how long (1 to 12 hours each). Everything except the name is optional. No route is drawn until both Start and End are filled in. The budget is what Split uses for that trip.
-- **Plan.** Review proposed stops, like one, or suggest a new waypoint.
-- **Drive.** Follow the route and today’s itinerary. With two or more drivers set on the Trip tab, the route is split into one colour per driver, each stretch as long as that driver can drive; a change of colour is a change of driver. If one driver can cover the whole route, or only one driver is set, the line is in that driver's colour. A change within 5 miles of a stop moves to that stop. The steering-wheel control opens the driver-rotation reminder, using the first driver set on the Trip tab. The map shows real streets from Geoapify map tiles. It pans with one finger and zooms with a pinch or the + and - buttons, and the target button jumps to your location (or back to the whole route if there is none). Tap a pin to see that stop's time, notes, who suggested it, and its votes. The route line turns translucent once you zoom in far enough for street names to show. The bluetooth control opens the connection-lost notice.
-- **Split.** See the shared budget and log an expense, including notes for who paid and whether it was split.
+- **Trip.** Set the dates, budget and picture, and choose which crew members can drive and for how long (1 to 12 hours each, in 5-minute steps). Everything except the name is optional. The start and end are set by the route unless the owner switches on **Fixed start** or **Fixed end** and picks a place for it; with a switch off, the tab shows which stop the route picked. The budget is what Split uses for that trip. Everyone on the trip can see these settings, but only the owner can change them; the rest of the crew sees them greyed out. The exception is driving: each person ticks whether they drive and sets their own limit, and the owner sets it for people added by name.
+- **Plan.** Review proposed stops, vote on them, or suggest a new waypoint. Each stop shows a picture of its kind of place (food, gas, beach, sights or a stay), taken from the category chip it was found with or from Geoapify, one of three per kind; other stops keep a general picture. Each kind also has a colour: its search chip, the outline of its stop cards, and its pins on the Drive map and dots in the itinerary all use it. A stop has to be a place picked from the suggestions, so it always has a location; pressing Done picks the top suggestion. Stops saved before that rule, without a location, are marked "No location" and can't be on the route. The search box and its suggestions move up above the keyboard. The trip owner can tap **Make start** or **Make end** on a stop to fix it as the start or end (tapping it again unfixes it). A stop is selected once more than half the crew gives it a thumbs up, and vetoed once more than half gives it a thumbs down; until then it stays suggested. Only people with an account can vote, so people added by name on the Trip tab don't count toward the majority. If you're the only one who can vote, your vote decides. Remove a stop with the trash can at the bottom right of its card, after confirming. You can remove your own suggestions; the trip's owner can remove anyone's, and is the only one who can remove the start or end. The button only shows on stops you're allowed to remove.
+- **Drive.** Follow the route and today’s itinerary. Route progress starts minimized as a "See Route Progress" button just above the itinerary panel, moving with it; tap it to open the progress box, and use its arrow to minimize it again. The itinerary panel starts with **Find Gas**, **Find Food** and **Find Rest** buttons; for now they are a preview that shows example places (Find Rest shows the message for being too far from the route) and adds nothing. With two or more drivers set on the Trip tab, the route is split into one colour per driver, each stretch as long as that driver can drive; a change of colour is a change of driver. If one driver can cover the whole route, or only one driver is set, the line is in that driver's colour. A change within 5 miles of a stop moves to that stop. The steering-wheel control opens the driver-rotation reminder, using the first driver set on the Trip tab. The map shows real streets from Geoapify map tiles. It pans with one finger and zooms with a pinch or the + and - buttons, and the target button jumps to your location (or back to the whole route if there is none). Tap a pin to see that stop's time, notes, who suggested it, and its votes. The route line turns translucent once you zoom in far enough for street names to show. The bluetooth control opens the connection-lost notice.
+- **Split.** See the shared budget and log an expense, including notes for who paid and whether it was split. The item name is optional; left blank, the expense is named after its type, like "Gas". **Settle up** picks which kinds of cost to split evenly between everyone on the trip, people added by name included, then shows each person's share, what they paid, and who pays whom so everyone ends up even, in as few payments as it takes. A cost paid by several people counts as paid evenly by them; a cost paid by someone not on the trip is left out. It only shows the amounts and saves nothing.
 
-Trips, crews and expenses come from the API for the signed-in account. Trip settings, suggested stops and votes are still kept on the phone only, so the rest of the crew does not see them yet.
+Everything about a trip is saved in the API's database: its settings (name, start and end, dates, budget, picture, people added by name, drivers), suggested stops with their notes, and each person's vote. Reloading the app or opening it on another phone shows the same trip. The phone itself keeps only the sign-in token. On the Plan tab a stop's status follows the crew's majority vote.
 
 ## Drive screen
 
-The route only includes stops that are selected (thumbs up) and have a location, ordered to be as short as it can be. The first stop stays first, and a Destination or Arrival stop stays last. The progress bar follows the phone's real location along that route, so install the location package once with `npx expo install expo-location` and allow location when asked. On the Android emulator, set a location in the emulator's extended controls (`...` > Location), or progress shows "Not on the route yet".
+The route only includes stops that are selected and have a location, plus a fixed start or end, ordered to be as short as it can be. It is drawn once at least two stops qualify. A fixed start stays first and a fixed end stays last; otherwise the shortest route decides where the trip starts and ends, beginning at whichever of its two ends was added first. The progress bar follows the phone's real location along that route, so install the location package once with `npx expo install expo-location` and allow location when asked. On the Android emulator, set a location in the emulator's extended controls (`...` > Location), or progress shows "Not on the route yet".
 
 ## API
 
@@ -44,7 +49,7 @@ npm install
 npm start
 ```
 
-For address search, put your Geoapify key in `server/.env` as `GEOAPIFY_API_KEY=...` and restart the API. The key stays on the server and the app never sees it. Without it the map has no streets behind the route, the address fields are plain text, and everything else works.
+For address search, put your Geoapify key in `server/.env` as `GEOAPIFY_API_KEY=...` and restart the API. The key stays on the server and the app never sees it. Without it the map has no streets behind the route and no places can be found, so no stops can be added or fixed as the start or end; everything else works.
 
 The API listens on [http://localhost:3000](http://localhost:3000). Postgres is published on port 5433 so it does not collide with a Postgres already running on 5432.
 
@@ -69,8 +74,9 @@ Tables:
 - `users` — `id`, `email` (unique, any case), `name`, `password_hash`, `created_at`
 - `sessions` — `token_hash`, `user_id`, `created_at`, `expires_at`
 - `trip_members` — `trip_id`, `user_id`, `role` (`owner` or `member`), `joined_at`
-- `trips` — `id`, `title`, `share_code`, `budget`, `owner_id`, `created_at`
-- `waypoints` — `id`, `trip_id`, `name`, `latitude`, `longitude`, `sequence_order`, plus a PostGIS `location` point filled from the coordinates
+- `trips` — `id`, `title`, `share_code`, `budget`, `owner_id`, `created_at`, `start_date`, `end_date`, `image` (an https URL or image data URL), `drivers` (JSON list of crew ids and limits), `guests` (JSON list of people added by name)
+- `waypoints` — `id`, `trip_id`, `name`, `latitude` and `longitude` (empty only on stops saved before a picked place was required), `sequence_order`, `role` (`start`, `end`, or empty for a suggestion), `note`, `category` (`food`, `gas`, `beach`, `sights`, `lodging`, or empty when unknown), `proposed_by`, `created_at`, plus a PostGIS `location` point filled from the coordinates
+- `waypoint_votes` — `waypoint_id`, `user_id`, `vote` (`up` or `down`), one per person per stop
 - `expenses` — `id`, `trip_id`, `paid_by_user`, `amount`, `category`, `title`, `description`, `photos`, `created_by`
 
 Endpoints:
@@ -83,10 +89,14 @@ Endpoints:
 - `POST /api/trips` — body `{ "title": "North Shore Getaway", "budget": 500 }`. `budget` is optional and must be greater than 0. You become the owner and the API picks the share code.
 - `POST /api/trips/join` — body `{ "share_code": "N7XUAUT2" }`. Adds you to that trip's crew.
 - `DELETE /api/trips/:id` — the owner deletes the trip; a member leaves it.
-- `POST /api/trips/:id/waypoints` — body `{ "name": "Pipeline Beach", "latitude": 21.665, "longitude": -158.053 }`. `sequence_order` is optional and defaults to the next stop.
-- `GET /api/trips/:id` — the trip, its members, its stops in order, and its expenses.
-- `GET /api/geo/autocomplete?text=Ala Moana` — up to 5 address suggestions with coordinates, looked up through Geoapify. Needs `GEOAPIFY_API_KEY`. `text` must be 3 to 200 characters, and each caller is limited to 60 searches a minute.
-- `GET /api/geo/places?category=food|gas|beach|sights|lodging&lat=...&lon=...` — named places of that kind within about 9 miles of a point.
+- `PATCH /api/trips/:id` — saves the Trip tab. Any of `title`, `budget` (null clears it), `start_date` and `end_date` (`YYYY-MM-DD` or null), `image` (https URL or image data URL under 3 MB, or null), `drivers` (`[{ "crewId", "limitMinutes" }]`, 60 to 720), `guests` (`[{ "id", "name" }]`), and `start` and `end` (`{ "name", "latitude", "longitude" }` to fix it, or null to unfix it; the stop stays on the trip as an ordinary stop). Only the owner can send `start` or `end`. Only the fields sent change. Returns the trip like `GET /api/trips/:id`. Only the owner can send fields other than `drivers`. In `drivers`, each person's own entry is taken from what they send, and the owner's save also sets entries for people added by name; everyone else's entries stay as they were.
+- `POST /api/trips/:id/waypoints` — body `{ "name": "Pipeline Beach", "latitude": 21.665, "longitude": -158.053, "note": "Surf check" }`. The name, latitude and longitude are required; the note and `category` (`food`, `gas`, `beach`, `sights` or `lodging`) are optional. `sequence_order` is optional and defaults to the next stop.
+- `DELETE /api/trips/:id/waypoints/:waypointId` — removes a stop and its votes. Members can remove their own suggestions; the owner can remove any stop, including the Start and End. Anyone else gets 403.
+- `PUT /api/trips/:id/waypoints/:waypointId/role` — body `{ "role": "start" | "end" | null }`. Owner only. Fixes the stop as the start or end (the stop that held that role goes back to being ordinary), or null to unfix it. The stop needs a location. Returns the trip like `GET /api/trips/:id`.
+- `PUT /api/trips/:id/waypoints/:waypointId/vote` — body `{ "vote": "up" | "down" | null }`. null takes your vote back. Returns the stop with its counts.
+- `GET /api/trips/:id` — the trip, its members, its stops in order (with `likes`, `dislikes` and your `my_vote`), and its expenses.
+- `GET /api/geo/autocomplete?text=Ala Moana` — up to 5 address suggestions with coordinates, looked up through Geoapify. Each has a `category` when Geoapify says it is a kind of place the app has pictures for, or null. Needs `GEOAPIFY_API_KEY`. `text` must be 3 to 200 characters, and each caller is limited to 60 searches a minute.
+- `GET /api/geo/places?category=food|gas|beach|sights|lodging&lat=...&lon=...` — named places of that kind within about 9 miles of a point, each with that `category`.
 - `GET /api/geo/tile/osm-bright/:z/:x/:y` — one high-resolution map tile as a PNG. The API keeps recently used tiles in memory, up to 64 MB, and only tiles it has to fetch count toward Geoapify credits and the limit of 600 a minute per caller.
 - `POST /api/geo/route` — body `{ "points": [{ "latitude": 21.66, "longitude": -158.05 }, ...] }` with 2 to 12 points. Returns the driving distance, time, each leg, and the road line.
 

@@ -9,6 +9,7 @@ import { PrimaryButton } from '../components/Buttons';
 import { ExpenseGlyph } from '../components/ExpenseGlyph';
 import { Ring } from '../components/Ring';
 import { TripHeader } from '../components/TripHeader';
+import { SettleUpDialog } from './SettleUpDialog';
 
 export function CostsScreen({
   trip,
@@ -25,6 +26,7 @@ export function CostsScreen({
   const remaining = Math.max(0, trip.budget - spent);
   const progress = trip.budget > 0 ? spent / trip.budget : 0;
   const [viewing, setViewing] = useState<string | null>(null);
+  const [settling, setSettling] = useState(false);
 
   return (
     <View style={layout.fill}>
@@ -52,7 +54,15 @@ export function CostsScreen({
           </View>
         )}
 
-        <Text style={layout.section}>Shared Log</Text>
+        <View style={styles.logHeader}>
+          <Text style={layout.section}>Shared Log</Text>
+          {trip.expenses.length > 0 ? (
+            <TouchableOpacity style={styles.settle} onPress={() => setSettling(true)} activeOpacity={0.8} accessibilityRole="button">
+              <Ionicons name="swap-horizontal" size={16} color={C.teal} />
+              <Text style={styles.settleText}>Settle up</Text>
+            </TouchableOpacity>
+          ) : null}
+        </View>
         {trip.expenses.length === 0 ? (
           <View style={styles.empty}>
             <Text style={styles.emptyTitle}>No shared costs yet</Text>
@@ -91,6 +101,7 @@ export function CostsScreen({
           <PrimaryButton label="Log Expense" onPress={onLog} icon={<Ionicons name="add" size={18} color={C.white} />} />
         </View>
       ) : null}
+      {settling ? <SettleUpDialog trip={trip} onClose={() => setSettling(false)} /> : null}
       <Modal visible={viewing !== null} transparent animationType="fade" onRequestClose={() => setViewing(null)}>
         <Pressable style={styles.viewer} onPress={() => setViewing(null)} accessibilityLabel="Close photo">
           {viewing ? <Image source={{ uri: viewing }} style={styles.full} resizeMode="contain" /> : null}
@@ -101,6 +112,26 @@ export function CostsScreen({
 }
 
 const styles = StyleSheet.create({
+  logHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  settle: {
+    marginTop: 16,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: 999,
+    backgroundColor: 'rgba(14, 159, 138, 0.12)',
+  },
+  settleText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: C.teal,
+  },
   budget: {
     flexDirection: 'row',
     alignItems: 'center',

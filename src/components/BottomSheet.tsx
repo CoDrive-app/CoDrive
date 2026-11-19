@@ -3,8 +3,8 @@ import { useEffect, useMemo, useRef } from 'react';
 import { Animated, PanResponder, StyleSheet, Text, View } from 'react-native';
 import { C } from '../theme';
 
-/** Tall enough to show the handle, the title, and the trip summary underneath it. */
-export const COLLAPSED_HEIGHT = 150;
+/** Tall enough to show the handle, the title, the Find Gas / Food / Rest buttons, and the trip summary underneath. */
+export const COLLAPSED_HEIGHT = 194;
 const TAP_SLOP = 6;
 /** How far ahead a flick carries the sheet, in milliseconds of its release speed. */
 const FLICK_MS = 150;

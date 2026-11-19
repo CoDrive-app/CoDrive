@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { nearbyPlaces, searchAddresses, type AddressSuggestion, type PlaceKind } from '../api';
-import { C } from '../theme';
+import { C, CATEGORY_COLORS } from '../theme';
 
 const MIN_CHARS = 3;
 const PAUSE_MS = 350;
@@ -20,18 +20,16 @@ type Anchor = { latitude: number; longitude: number };
 /**
  * The "Suggest a new waypoint" box. Typing suggests real places (nearest to the trip first),
  * and the chips list food, gas, beaches and more near the end of the route.
- * Plain text still works: press done to suggest a stop that has no location.
+ * Only real places can be suggested: pressing Done picks the top suggestion, waiting for it if the search is still running.
  */
 export function StopSearch({
   value,
   onChangeText,
-  onSubmit,
   onPick,
   anchor,
 }: {
   value: string;
   onChangeText: (value: string) => void;
-  onSubmit: () => void;
   onPick: (place: AddressSuggestion) => void;
   anchor: Anchor | null;
 }) {
@@ -40,7 +38,12 @@ export function StopSearch({
   const [loading, setLoading] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
   const [focused, setFocused] = useState(false);
+  // The chip in use, readable from inside a search that finishes later.
+  const kindRef = useRef<PlaceKind | null>(null);
+  kindRef.current = kind;
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Set when Done was pressed before the search came back, so the top result is picked as soon as it arrives.
+  const pickWhenReady = useRef(false);
   // Bumped whenever a search starts or is cancelled, so late answers from older searches are ignored.
   const latest = useRef(0);
 
@@ -53,6 +56,7 @@ export function StopSearch({
   );
 
   const reset = () => {
+    pickWhenReady.current = false;
     if (timer.current) clearTimeout(timer.current);
     latest.current += 1;
     setResults([]);
@@ -70,8 +74,13 @@ export function StopSearch({
       try {
         const found = await task();
         if (ticket !== latest.current) return;
+        if (pickWhenReady.current && found.results.length > 0) {
+          pick(found.results[0]);
+          return;
+        }
+        pickWhenReady.current = false;
         setResults(found.results);
-        if (found.results.length === 0) setProblem('Nothing found nearby.');
+        if (found.results.length === 0) setProblem(kindRef.current ? 'Nothing found nearby.' : 'No places found. Try another name.');
       } catch (error) {
         if (ticket !== latest.current) return;
         setResults([]);
@@ -84,6 +93,7 @@ export function StopSearch({
 
   const change = (next: string) => {
     onChangeText(next);
+    pickWhenReady.current = false;
     setKind(null);
     const query = next.trim();
     if (query.length < MIN_CHARS) {
@@ -108,17 +118,32 @@ export function StopSearch({
     run(() => nearbyPlaces(next, anchor), 0);
   };
 
+  // Picking clears the results but leaves the panel to follow the box's real focus: while the keyboard stays open,
+  // the box is still focused, so the category chips stay too.
   const pick = (place: AddressSuggestion) => {
     reset();
-    setFocused(false);
     onPick(place);
+  };
+
+  /** Done on the keyboard: take the top suggestion, or wait for it if the search is still going. */
+  const submit = () => {
+    if (results.length > 0 && !loading) {
+      pick(results[0]);
+      return;
+    }
+    if (loading) {
+      pickWhenReady.current = true;
+      return;
+    }
+    setProblem(value.trim().length < MIN_CHARS ? `Type at least ${MIN_CHARS} letters, then pick a place from the list.` : 'No places found. Try another name.');
   };
 
   // Typed suggestions close when the box loses focus; a tap on a suggestion gets a moment to land first.
   const blur = () => {
     setTimeout(() => {
       setFocused(false);
-      if (kind === null) reset();
+      // Done closes the keyboard too; a search still finishing for Done must not be cancelled by that.
+      if (kind === null && !pickWhenReady.current) reset();
     }, 200);
   };
 
@@ -134,9 +159,10 @@ export function StopSearch({
                 key={item.kind}
                 onPress={() => chooseKind(item.kind)}
                 activeOpacity={0.8}
-                style={[styles.chip, kind === item.kind && styles.chipOn]}
+                // Each chip wears its kind's colour: a light tint until chosen, then filled.
+                style={[styles.chip, { backgroundColor: `${CATEGORY_COLORS[item.kind]}1F` }, kind === item.kind && { backgroundColor: CATEGORY_COLORS[item.kind] }]}
               >
-                <Text style={[styles.chipText, kind === item.kind && styles.chipTextOn]}>{item.label}</Text>
+                <Text style={[styles.chipText, { color: CATEGORY_COLORS[item.kind] }, kind === item.kind && styles.chipTextOn]}>{item.label}</Text>
               </TouchableOpacity>
             ))}
             {loading ? <ActivityIndicator size="small" color={C.teal} style={styles.spinner} /> : null}
@@ -145,7 +171,7 @@ export function StopSearch({
             <ScrollView style={styles.list} keyboardShouldPersistTaps="handled" nestedScrollEnabled>
               {results.map((item) => (
                 <TouchableOpacity key={item.id} style={styles.row} activeOpacity={0.7} onPress={() => pick(item)} accessibilityLabel={item.label}>
-                  <Ionicons name="location-outline" size={18} color={C.teal} />
+                  <Ionicons name="location-outline" size={18} color={item.category ? CATEGORY_COLORS[item.category] : C.teal} />
                   <View style={styles.copy}>
                     <Text style={styles.line1} numberOfLines={1}>
                       {item.line1 || item.label}
@@ -171,7 +197,7 @@ export function StopSearch({
         onChangeText={change}
         onFocus={() => setFocused(true)}
         onBlur={blur}
-        onSubmitEditing={onSubmit}
+        onSubmitEditing={submit}
         returnKeyType="done"
         autoCorrect={false}
       />

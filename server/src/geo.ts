@@ -33,6 +33,8 @@ export type AddressSuggestion = {
   label: string;
   latitude: number;
   longitude: number;
+  /** What kind of place it is, when Geoapify says it is one of the kinds the app knows. */
+  category: PlaceCategory | null;
 };
 
 export class GeoError extends Error {}
@@ -77,7 +79,7 @@ export async function findPlaces(
   const body = await getJson(url);
   return featuresOf(body)
     .filter((feature) => str(feature.properties?.name) !== null)
-    .flatMap((feature) => toSuggestion(feature))
+    .flatMap((feature) => toSuggestion(feature, category))
     .slice(0, limit);
 }
 
@@ -169,7 +171,31 @@ function featuresOf(body: unknown): Feature[] {
   return Array.isArray(features) ? (features as Feature[]) : [];
 }
 
-function toSuggestion(feature: Feature): AddressSuggestion[] {
+/**
+ * The app's kind for a Geoapify category, like "catering.restaurant" for food. Geoapify sends one category or a list;
+ * anything the app has no picture for, like a plain address or a town, is null.
+ */
+export function categoryOf(raw: unknown): PlaceCategory | null {
+  const names = (Array.isArray(raw) ? raw : [raw]).filter((item): item is string => typeof item === 'string');
+  const has = (test: (name: string) => boolean) => names.some(test);
+  if (has((name) => name === 'beach' || name.startsWith('beach.') || name.includes('.beach'))) return 'beach';
+  if (has((name) => name === 'commercial.gas' || name.startsWith('service.vehicle.fuel'))) return 'gas';
+  if (has((name) => name === 'catering' || name.startsWith('catering.'))) return 'food';
+  if (has((name) => name === 'accommodation' || name.startsWith('accommodation.'))) return 'lodging';
+  if (
+    has((name) =>
+      ['tourism', 'entertainment', 'heritage', 'national_park', 'natural'].some(
+        (group) => name === group || name.startsWith(`${group}.`),
+      ),
+    )
+  ) {
+    return 'sights';
+  }
+  return null;
+}
+
+/** `known` is the kind that was searched for, when the search was for one kind of place. */
+function toSuggestion(feature: Feature, known?: PlaceCategory): AddressSuggestion[] {
   const props = feature.properties ?? {};
   const coords = Array.isArray(feature.geometry?.coordinates) ? feature.geometry.coordinates : [];
   const latitude = finite(props.lat) ?? finite(coords[1]);
@@ -184,7 +210,8 @@ function toSuggestion(feature: Feature): AddressSuggestion[] {
   const city = str(props.city);
   const name = line1 ? (city && !line1.includes(city) ? `${line1}, ${city}` : line1) : label;
 
-  return [{ id: str(props.place_id) ?? `${latitude},${longitude}`, name, line1, line2, label, latitude, longitude }];
+  const category = known ?? categoryOf(props.categories ?? props.category);
+  return [{ id: str(props.place_id) ?? `${latitude},${longitude}`, name, line1, line2, label, latitude, longitude, category }];
 }
 
 function str(value: unknown): string | null {

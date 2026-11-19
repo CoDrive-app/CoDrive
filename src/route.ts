@@ -1,4 +1,4 @@
-import { hasEndpoints, roleOf } from './stops';
+import { roleOf } from './stops';
 import type { Trip, Waypoint } from './types';
 
 export type LocatedStop = Waypoint & { latitude: number; longitude: number };
@@ -40,65 +40,82 @@ function* permutations<T>(items: T[]): Generator<T[]> {
 
 const MOST_TO_TRY_ALL = 8;
 
-/** The stop the trip is heading for, which always stays last. */
-function isDestination(stop: Waypoint) {
-  return roleOf(stop) === 'end' || stop.stop === 'Arrival';
-}
-
 /**
- * Puts the middle stops in the shortest order. The Start stays first (or the first stop if none is marked), and the End,
- * or a stop marked "Arrival", stays last. Distances are straight-line, which is a good guide for choosing an order.
- * Up to 8 middle stops are checked exhaustively; beyond that a nearest-neighbour pass plus 2-opt is used.
+ * Puts the stops in the shortest order. A fixed Start stays first and a fixed End stays last; whichever is not fixed
+ * is simply wherever the shortest route begins or ends. With neither fixed, a route is as long either way, so it
+ * begins at whichever of its two ends was added to the trip first. Distances are straight-line, which is a good guide
+ * for choosing an order. Up to 8 free stops are checked exhaustively; beyond that a nearest-neighbour pass plus 2-opt is used.
  */
 export function orderStops(stops: LocatedStop[]): LocatedStop[] {
-  if (stops.length <= 2) return stops;
-  const startAt = Math.max(0, stops.findIndex((stop) => roleOf(stop) === 'start'));
-  const first = stops[startAt];
-  const rest = stops.filter((stop) => stop !== first);
-  const endIndex = rest.findIndex(isDestination);
-  const end = endIndex === -1 ? null : rest[endIndex];
-  const middle = rest.filter((stop) => stop !== end);
-  const wrap = (body: LocatedStop[]) => (end ? [first, ...body, end] : [first, ...body]);
+  if (stops.length <= 1) return stops;
+  const start = stops.find((stop) => roleOf(stop) === 'start');
+  const end = stops.find((stop) => stop !== start && roleOf(stop) === 'end');
+  const free = stops.filter((stop) => stop !== start && stop !== end);
+  const wrap = (body: LocatedStop[]) => [...(start ? [start] : []), ...body, ...(end ? [end] : [])];
 
-  if (middle.length <= MOST_TO_TRY_ALL) {
-    let best = middle;
-    let bestCost = pathCost(wrap(middle));
-    for (const candidate of permutations(middle)) {
-      const cost = pathCost(wrap(candidate));
-      if (cost < bestCost - 1e-6) {
-        best = candidate;
-        bestCost = cost;
+  let best = free.length <= MOST_TO_TRY_ALL ? tryEveryOrder(free, wrap) : nearestThenUntangle(free, wrap, start);
+  if (!start && !end && best.length > 1 && stops.indexOf(best[best.length - 1]) < stops.indexOf(best[0])) {
+    best = [...best].reverse();
+  }
+  return wrap(best);
+}
+
+function tryEveryOrder(free: LocatedStop[], wrap: (body: LocatedStop[]) => LocatedStop[]) {
+  let best = free;
+  let bestCost = pathCost(wrap(free));
+  for (const candidate of permutations(free)) {
+    const cost = pathCost(wrap(candidate));
+    if (cost < bestCost - 1e-6) {
+      best = candidate;
+      bestCost = cost;
+    }
+  }
+  return best;
+}
+
+/** Too many to try every order: go to the nearest unvisited stop each time, then untangle with 2-opt. */
+function nearestThenUntangle(
+  free: LocatedStop[],
+  wrap: (body: LocatedStop[]) => LocatedStop[],
+  start: LocatedStop | undefined,
+) {
+  // Without a fixed Start, try beginning at each stop and keep the shortest.
+  const firsts = start ? [start] : free;
+  let best: LocatedStop[] = free;
+  let bestCost = Infinity;
+  for (const first of firsts) {
+    const todo = free.filter((stop) => stop !== first);
+    const order: LocatedStop[] = start ? [] : [first];
+    let here = first;
+    while (todo.length > 0) {
+      let nearest = 0;
+      for (let i = 1; i < todo.length; i += 1) {
+        if (distanceMeters(here, todo[i]) < distanceMeters(here, todo[nearest])) nearest = i;
       }
+      here = todo.splice(nearest, 1)[0];
+      order.push(here);
     }
-    return wrap(best);
+    const cost = pathCost(wrap(order));
+    if (cost < bestCost) {
+      best = order;
+      bestCost = cost;
+    }
   }
 
-  // Too many to try every order: go to the nearest unvisited stop each time, then untangle with 2-opt.
-  const todo = [...middle];
-  let order: LocatedStop[] = [];
-  let here: LocatedStop = first;
-  while (todo.length > 0) {
-    let nearest = 0;
-    for (let i = 1; i < todo.length; i += 1) {
-      if (distanceMeters(here, todo[i]) < distanceMeters(here, todo[nearest])) nearest = i;
-    }
-    here = todo.splice(nearest, 1)[0];
-    order.push(here);
-  }
   let improved = true;
   while (improved) {
     improved = false;
-    for (let i = 0; i < order.length - 1; i += 1) {
-      for (let j = i + 1; j < order.length; j += 1) {
-        const flipped = [...order.slice(0, i), ...order.slice(i, j + 1).reverse(), ...order.slice(j + 1)];
-        if (pathCost(wrap(flipped)) < pathCost(wrap(order)) - 1e-6) {
-          order = flipped;
+    for (let i = 0; i < best.length - 1; i += 1) {
+      for (let j = i + 1; j < best.length; j += 1) {
+        const flipped = [...best.slice(0, i), ...best.slice(i, j + 1).reverse(), ...best.slice(j + 1)];
+        if (pathCost(wrap(flipped)) < pathCost(wrap(best)) - 1e-6) {
+          best = flipped;
           improved = true;
         }
       }
     }
   }
-  return wrap(order);
+  return best;
 }
 
 function hasLocation(stop: Waypoint): stop is LocatedStop {
@@ -107,11 +124,11 @@ function hasLocation(stop: Waypoint): stop is LocatedStop {
 
 /**
  * Stops on the route: only the selected ones with a location, in the shortest order.
- * Nothing is routed until the trip has both a Start and an End.
+ * A fixed Start or End always counts as selected. Nothing is routed until there are at least two.
  */
 export function routedStops(trip: Trip): LocatedStop[] {
-  if (!hasEndpoints(trip)) return [];
-  return orderStops(trip.waypoints.filter((stop): stop is LocatedStop => stop.status === 'selected' && hasLocation(stop)));
+  const chosen = trip.waypoints.filter((stop): stop is LocatedStop => stop.status === 'selected' && hasLocation(stop));
+  return chosen.length >= 2 ? orderStops(chosen) : [];
 }
 
 /** The stops shown on the Drive screen: the route in order, then selected stops that have no location. */
