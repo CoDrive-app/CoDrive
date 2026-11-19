@@ -23,6 +23,8 @@ export interface Waypoint {
   /** Optional note from whoever suggested the stop; shown in place of `detail`. */
   note?: string;
   proposedBy: string;
+  /** The account id of whoever suggested the stop, when the server knows it. */
+  proposedById?: string;
   likes: number;
   dislikes: number;
   vote: Vote;

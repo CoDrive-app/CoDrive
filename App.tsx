@@ -100,6 +100,7 @@ function stopFromApi(row: ApiWaypoint, groupSize: number): Waypoint {
     ...STOP_LOOKS[role ?? 'suggestion'],
     note: row.note || undefined,
     proposedBy: row.proposed_by ?? 'Someone',
+    proposedById: row.proposed_by_id ?? undefined,
     likes: row.likes,
     dislikes: row.dislikes,
     vote: row.my_vote,
@@ -467,6 +468,8 @@ function CoDrive({ user, onSignOut }: { user: ApiUser; onSignOut: () => void }) 
       .catch(() => replace(before));
   };
 
+  const removeStop = removeId ? trip?.waypoints.find((stop) => stop.id === removeId) : undefined;
+
   const askRemove = (id: string) => {
     setRemoveError(null);
     setRemoveId(id);
@@ -588,6 +591,7 @@ function CoDrive({ user, onSignOut }: { user: ApiUser; onSignOut: () => void }) 
                 onPickPlace={pickPlace}
                 onVote={vote}
                 onRemove={askRemove}
+                userId={user.id}
                 onInvite={() => setInviteOpen(true)}
               />
             ) : null}
@@ -702,9 +706,12 @@ function CoDrive({ user, onSignOut }: { user: ApiUser; onSignOut: () => void }) 
           />
         ) : null}
 
-        {removeId && trip ? (
+        {removeStop && trip ? (
           <RemoveStopDialog
-            stopTitle={trip.waypoints.find((stop) => stop.id === removeId)?.title ?? 'This stop'}
+            stopTitle={removeStop.title}
+            kind={removeStop.role ?? 'suggestion'}
+            // The owner removing someone else's suggestion is told whose it is.
+            suggestedBy={!removeStop.role && removeStop.proposedById !== user.id ? removeStop.proposedBy : undefined}
             onConfirm={confirmRemove}
             onClose={() => setRemoveId(null)}
             submitting={removing}

@@ -112,6 +112,8 @@ export type ApiWaypoint = {
   note: string;
   /** The name of whoever suggested it, or null if their account is gone. */
   proposed_by: string | null;
+  /** The account id of whoever suggested it, so the app knows whose suggestion it is. */
+  proposed_by_id: string | null;
   likes: number;
   dislikes: number;
   my_vote: 'up' | 'down' | null;
@@ -214,7 +216,7 @@ export function joinTrip(shareCode: string) {
   });
 }
 
-/** Removes a stop and its votes for everyone on the trip. The Start and End can't be removed this way. */
+/** Removes a stop and its votes for everyone on the trip. Only your own suggestions, unless you own the trip. */
 export function removeWaypoint(tripId: string, waypointId: string) {
   return request<void>(`/api/trips/${tripId}/waypoints/${waypointId}`, { method: 'DELETE' });
 }

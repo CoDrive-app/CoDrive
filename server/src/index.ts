@@ -454,7 +454,10 @@ app.put('/api/trips/:id/waypoints/:waypointId/vote', wrap(async (req, res) => {
   res.json(saved);
 }));
 
-/** Removes a suggested stop, and its votes, for everyone on the trip. The Start and End are set on the Trip tab. */
+/**
+ * Removes a stop, and its votes, for everyone on the trip. You can remove your own suggestions; the trip's owner
+ * can remove anyone's, and is the only one who can remove the Start or End.
+ */
 app.delete('/api/trips/:id/waypoints/:waypointId', wrap(async (req, res) => {
   const user = currentUser(res);
   const { id: tripId, waypointId } = req.params;
@@ -463,7 +466,7 @@ app.delete('/api/trips/:id/waypoints/:waypointId', wrap(async (req, res) => {
     return;
   }
   const found = await pool.query(
-    `SELECT w.role FROM waypoints w
+    `SELECT w.role, w.proposed_by, m.role AS member_role FROM waypoints w
      JOIN trip_members m ON m.trip_id = w.trip_id AND m.user_id = $3
      WHERE w.id = $2 AND w.trip_id = $1`,
     [tripId, waypointId, user.id],
@@ -472,8 +475,14 @@ app.delete('/api/trips/:id/waypoints/:waypointId', wrap(async (req, res) => {
     res.status(404).json({ error: 'Stop not found' });
     return;
   }
-  if (found.rows[0].role) {
-    res.status(400).json({ error: 'Change the Start and End on the Trip tab' });
+  const stop = found.rows[0] as { role: 'start' | 'end' | null; proposed_by: string | null; member_role: string };
+  const owner = stop.member_role === 'owner';
+  if (stop.role && !owner) {
+    res.status(403).json({ error: 'Only the trip owner can remove the start or end' });
+    return;
+  }
+  if (!stop.role && !owner && stop.proposed_by !== user.id) {
+    res.status(403).json({ error: 'You can only remove your own suggestions' });
     return;
   }
   await pool.query('DELETE FROM waypoints WHERE id = $1 AND trip_id = $2', [waypointId, tripId]);
@@ -832,7 +841,7 @@ type Queryable = Pick<typeof pool, 'query'>;
 async function findWaypoints(db: Queryable, tripId: string, userId: string, waypointId?: string) {
   const result = await db.query(
     `SELECT w.id, w.trip_id, w.name, w.latitude, w.longitude, w.sequence_order, w.role, w.note,
-       u.name AS proposed_by,
+       u.name AS proposed_by, w.proposed_by AS proposed_by_id,
        (SELECT count(*) FROM waypoint_votes v WHERE v.waypoint_id = w.id AND v.vote = 'up') AS likes,
        (SELECT count(*) FROM waypoint_votes v WHERE v.waypoint_id = w.id AND v.vote = 'down') AS dislikes,
        (SELECT v.vote FROM waypoint_votes v WHERE v.waypoint_id = w.id AND v.user_id = $2) AS my_vote
@@ -855,6 +864,7 @@ function waypointRow(row: {
   role: 'start' | 'end' | null;
   note: string;
   proposed_by: string | null;
+  proposed_by_id: string | null;
   likes: number | string;
   dislikes: number | string;
   my_vote: 'up' | 'down' | null;
@@ -869,6 +879,7 @@ function waypointRow(row: {
     role: row.role,
     note: row.note,
     proposed_by: row.proposed_by,
+    proposed_by_id: row.proposed_by_id,
     likes: Number(row.likes),
     dislikes: Number(row.dislikes),
     my_vote: row.my_vote,
