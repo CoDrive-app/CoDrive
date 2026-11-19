@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { nearbyPlaces, searchAddresses, type AddressSuggestion, type PlaceKind } from '../api';
-import { C } from '../theme';
+import { C, CATEGORY_COLORS } from '../theme';
 
 const MIN_CHARS = 3;
 const PAUSE_MS = 350;
@@ -158,9 +158,10 @@ export function StopSearch({
                 key={item.kind}
                 onPress={() => chooseKind(item.kind)}
                 activeOpacity={0.8}
-                style={[styles.chip, kind === item.kind && styles.chipOn]}
+                // Each chip wears its kind's colour: a light tint until chosen, then filled.
+                style={[styles.chip, { backgroundColor: `${CATEGORY_COLORS[item.kind]}1F` }, kind === item.kind && { backgroundColor: CATEGORY_COLORS[item.kind] }]}
               >
-                <Text style={[styles.chipText, kind === item.kind && styles.chipTextOn]}>{item.label}</Text>
+                <Text style={[styles.chipText, { color: CATEGORY_COLORS[item.kind] }, kind === item.kind && styles.chipTextOn]}>{item.label}</Text>
               </TouchableOpacity>
             ))}
             {loading ? <ActivityIndicator size="small" color={C.teal} style={styles.spinner} /> : null}
@@ -169,7 +170,7 @@ export function StopSearch({
             <ScrollView style={styles.list} keyboardShouldPersistTaps="handled" nestedScrollEnabled>
               {results.map((item) => (
                 <TouchableOpacity key={item.id} style={styles.row} activeOpacity={0.7} onPress={() => pick(item)} accessibilityLabel={item.label}>
-                  <Ionicons name="location-outline" size={18} color={C.teal} />
+                  <Ionicons name="location-outline" size={18} color={item.category ? CATEGORY_COLORS[item.category] : C.teal} />
                   <View style={styles.copy}>
                     <Text style={styles.line1} numberOfLines={1}>
                       {item.line1 || item.label}

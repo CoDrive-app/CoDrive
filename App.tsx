@@ -32,6 +32,7 @@ import {
 import { MapBackdrop } from './src/components/MapBackdrop';
 import { TabBar } from './src/components/TabBar';
 import { IMG, imageFor } from './src/data';
+import { CATEGORY_COLORS } from './src/theme';
 import { formatIso, formatTripDates } from './src/dates';
 import { currentDrivers, formatLimit } from './src/drivers';
 import { EXPENSE_TYPES, orderPayers, payerOptions, togglePayer } from './src/expenses';
@@ -102,6 +103,8 @@ function stopFromApi(row: ApiWaypoint, groupSize: number): Waypoint {
     // A picture of the kind of place it is, when known. Otherwise the start, end or suggestion picture.
     image: imageFor(row.category, row.id) ?? STOP_LOOKS[role ?? 'suggestion'].image,
     category: row.category ?? undefined,
+    // A stop of a known kind is drawn in that kind's colour, on the map and in the itinerary.
+    pin: row.category ? CATEGORY_COLORS[row.category] : STOP_LOOKS[role ?? 'suggestion'].pin,
     note: row.note || undefined,
     proposedBy: row.proposed_by ?? 'Someone',
     proposedById: row.proposed_by_id ?? undefined,
