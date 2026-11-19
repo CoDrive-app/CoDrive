@@ -226,10 +226,10 @@ app.post('/api/trips/:id/waypoints', wrap(async (req, res) => {
     return;
   }
 
-  // The location is optional: a stop typed without picking a suggestion has none yet.
+  // Every new stop needs a real location, picked from the suggestions, so it can be on the route.
   const stop = place(req.body);
   if (!stop) {
-    res.status(400).json({ error: 'name is required, with a valid latitude and longitude if given' });
+    res.status(400).json({ error: 'name, latitude and longitude are required. Pick the place from the suggestions.' });
     return;
   }
   const note = descriptionText(req.body?.note);
@@ -365,7 +365,7 @@ app.patch('/api/trips/:id', wrap(async (req, res) => {
   for (const role of ['start', 'end'] as const) {
     if (body[role] === undefined) continue;
     const stop = body[role] === null ? null : place(body[role]);
-    if (stop === undefined) return fail(`${role} needs a name, with a valid latitude and longitude if given`);
+    if (stop === undefined) return fail(`${role} needs a name, latitude and longitude. Pick it from the suggestions.`);
     endpoints.push({ role, stop });
   }
 
@@ -1017,12 +1017,11 @@ function isoDate(value: unknown): string | null | undefined {
 type Place = { name: string; latitude: number | null; longitude: number | null };
 
 /** A stop's name and optional location. Gives undefined if it is not valid. */
+/** A named place with a valid location. Stops saved before locations were required may still have none. */
 function place(value: unknown): Place | undefined {
   const body = value as { name?: unknown; latitude?: unknown; longitude?: unknown } | null;
   const name = text(body?.name);
   if (!name || name.length > 200) return undefined;
-  const hasLocation = body?.latitude !== undefined && body?.latitude !== null;
-  if (!hasLocation) return { name, latitude: null, longitude: null };
   const point = coordinate(body?.latitude, body?.longitude);
   return point ? { name, ...point } : undefined;
 }

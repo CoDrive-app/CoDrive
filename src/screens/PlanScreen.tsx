@@ -20,7 +20,6 @@ export function PlanScreen({
   trip,
   draft,
   onDraft,
-  onAdd,
   onPickPlace,
   onVote,
   onRemove,
@@ -33,7 +32,6 @@ export function PlanScreen({
   trip: Trip;
   draft: string;
   onDraft: (value: string) => void;
-  onAdd: () => void;
   onPickPlace: (place: AddressSuggestion) => void;
   onVote: (id: string, direction: 'up' | 'down') => void;
   /** Asks to remove a stop. */
@@ -66,6 +64,9 @@ export function PlanScreen({
               <Text style={styles.meta}>
                 {stop.note || stop.detail} · Proposed by {stop.proposedBy}
               </Text>
+              {typeof stop.latitude !== 'number' ? (
+                <Text style={styles.noLocation}>No location, so this stop can't be on the route.</Text>
+              ) : null}
               {owner && typeof stop.latitude === 'number' ? (
                 <View style={styles.roleRow}>
                   {(['start', 'end'] as const).map((role) => {
@@ -125,7 +126,6 @@ export function PlanScreen({
         <StopSearch
           value={draft}
           onChangeText={onDraft}
-          onSubmit={onAdd}
           onPick={onPickPlace}
           anchor={searchAnchor(trip)}
         />
@@ -145,6 +145,12 @@ const styles = StyleSheet.create({
   photo: {
     width: '100%',
     height: 168,
+  },
+  noLocation: {
+    marginTop: 4,
+    fontSize: 12,
+    fontWeight: '600',
+    color: C.orange,
   },
   notice: {
     marginBottom: 10,

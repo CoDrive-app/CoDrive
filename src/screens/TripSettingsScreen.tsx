@@ -270,6 +270,7 @@ export function TripSettingsScreen({
               onChangeText={(value) => change({ start: value })}
               placeholder="Ala Moana"
               onPick={(place) => change({ startSpot: { name: place.name, latitude: place.latitude, longitude: place.longitude } })}
+              picked={startSpot !== null}
             />
           ) : null}
           <Text style={styles.hint}>
@@ -293,6 +294,7 @@ export function TripSettingsScreen({
               onChangeText={(value) => change({ end: value })}
               placeholder="Turtle Bay"
               onPick={(place) => change({ endSpot: { name: place.name, latitude: place.latitude, longitude: place.longitude } })}
+              picked={endSpot !== null}
             />
           ) : null}
           <Text style={styles.hint}>

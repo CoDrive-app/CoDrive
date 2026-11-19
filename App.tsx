@@ -424,13 +424,6 @@ function CoDrive({ user, onSignOut }: { user: ApiUser; onSignOut: () => void }) 
     updateTrip(trip.id, () => tripFromApi(saved));
   };
 
-  const requestStop = () => {
-    if (!draftStop.trim() || !trip) return;
-    setStopNote('');
-    setStopError(null);
-    setNoteOpen(true);
-  };
-
   const pickPlace = (place: AddressSuggestion) => {
     setDraftStop(place.name);
     setDraftPlace({ name: place.name, latitude: place.latitude, longitude: place.longitude });
@@ -442,12 +435,18 @@ function CoDrive({ user, onSignOut }: { user: ApiUser; onSignOut: () => void }) 
   const addStop = async () => {
     const title = draftStop.trim();
     if (!title || !trip || addingStop) return;
+    // Only a place picked from the suggestions can be a stop, so it always has a location for the route.
+    const spot = spotFor(title, draftPlace);
+    if (!spot) {
+      setStopError('Pick the place from the suggestions first.');
+      return;
+    }
     const tripId = trip.id;
     setAddingStop(true);
     setStopError(null);
     try {
       const saved = await addWaypoint(tripId, {
-        ...placeFor(title, spotFor(title, draftPlace))!,
+        ...placeFor(title, spot)!,
         note: stopNote.trim(),
       });
       // New suggestions go before the End, where they will be after a reload.
@@ -624,7 +623,6 @@ function CoDrive({ user, onSignOut }: { user: ApiUser; onSignOut: () => void }) 
                 trip={trip}
                 draft={draftStop}
                 onDraft={setDraftStop}
-                onAdd={requestStop}
                 onPickPlace={pickPlace}
                 onVote={vote}
                 onRemove={askRemove}
