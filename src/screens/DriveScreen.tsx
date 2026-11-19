@@ -11,7 +11,6 @@ import { legAt, OFF_ROUTE_METERS, progressAlong } from '../progress';
 import { useCarPosition } from '../useCarPosition';
 import { currentDrivers } from '../drivers';
 import { driverAt, planDriverLegs, sectionsFor } from '../driverLegs';
-import { hasEndpoints } from '../stops';
 import { useRoute } from '../useRoute';
 
 export function DriveScreen({
@@ -30,7 +29,6 @@ export function DriveScreen({
   const [height, setHeight] = useState(0);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const drivers = currentDrivers(trip);
-  const ready = hasEndpoints(trip);
   const stops = routedStops(trip);
   const { plan, failed, loading } = useRoute(stops);
   const itinerary = drivingStops(trip);
@@ -47,9 +45,7 @@ export function DriveScreen({
       ? failed
         ? 'Route unavailable'
         : 'Finding the route…'
-      : ready
-        ? 'Select 2 stops with locations to track progress'
-        : 'Add a start and end to build the route'
+      : 'Select 2 stops on the Plan tab to build the route'
     : locationStatus === 'denied'
       ? 'Allow location to track progress'
       : locationStatus === 'unavailable'
@@ -67,11 +63,9 @@ export function DriveScreen({
       ? `Current leg: ${legStart.title} to ${legEnd.title}${plan ? ` · ${miles(plan.legs[legIndex]?.distanceMeters ?? plan.distanceMeters)}` : ''}${
           loading ? ' · finding the route…' : failed ? ' · route unavailable, showing a straight line' : ''
         }`
-      : !ready
-        ? 'Add a start and end on the Trip tab to build the route.'
-        : itinerary.length === 0
-          ? 'No stops selected yet. Give a stop a thumbs up on the Plan tab.'
-          : trip.leg;
+      : stops.length < 2
+        ? 'Select at least two stops with a location on the Plan tab to build the route.'
+        : trip.leg;
   const timings = plan ? schedule(stops, plan.legs) : null;
 
   // With more than one driver, the route is split into a stretch for each, in the crew's colours.
@@ -175,7 +169,7 @@ export function DriveScreen({
                 <View style={styles.copy}>
                   <Text style={styles.stopTitle}>{stop.title}</Text>
                   <Text style={styles.stopMeta}>
-                    {stop.stop}
+                    {stop.id === stops[0]?.id ? 'Departure' : stop.id === stops[stops.length - 1]?.id ? 'Arrival' : stop.stop}
                     {timings?.get(stop.id)?.legMeters ? ` · ${miles(timings.get(stop.id)?.legMeters ?? 0)} from the last stop` : ''}
                   </Text>
                 </View>

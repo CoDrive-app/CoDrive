@@ -151,7 +151,7 @@ function tripFromApi(row: ApiTrip | ApiTripDetail): Trip {
     budget: Number(row.budget) > 0 ? Number(row.budget) : 0,
     drivers: row.drivers,
     duration: '—',
-    leg: start && end ? `${start} to ${end}` : 'Add a start and end on the Trip tab',
+    leg: start && end ? `${start} to ${end}` : 'Select at least two stops on the Plan tab',
     rest: { place: 'Nearest safe pull-off', distance: '—', note: 'We’ll mark it once you’re moving' },
   };
 }
