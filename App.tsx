@@ -15,6 +15,7 @@ import {
   removeTrip,
   removeWaypoint,
   setAuthToken,
+  setStopRole,
   signOut,
   updateTrip as saveTrip,
   voteWaypoint,
@@ -51,7 +52,7 @@ import { StopNoteDialog } from './src/screens/StopNoteDialog';
 import { TripSettingsScreen, type TripSettings } from './src/screens/TripSettingsScreen';
 import { clearToken, loadToken, saveToken } from './src/session';
 import { isGuest } from './src/crew';
-import { spotFor } from './src/stops';
+import { endpoint, spotFor } from './src/stops';
 import { C } from './src/theme';
 import { castVote, statusFor } from './src/votes';
 import type { Crew, Expense, ExpenseType, Tab, Trip, Waypoint } from './src/types';
@@ -161,6 +162,15 @@ function placeFor(name: string, spot: Spot | null): ApiPlace | null {
   return spot ? { name, latitude: spot.latitude, longitude: spot.longitude } : { name };
 }
 
+/** `{ start: place }` when the fixed Start (or End) changed, null when it was turned off, or nothing if it is the same. */
+function endpointChange(trip: Trip, role: 'start' | 'end', next: ApiPlace | null): { start?: ApiPlace | null; end?: ApiPlace | null } {
+  const current = endpoint(trip, role);
+  const same = current
+    ? next !== null && current.title === next.name && current.latitude === next.latitude && current.longitude === next.longitude
+    : next === null;
+  return same ? {} : { [role]: next };
+}
+
 function CoDrive({ user, onSignOut }: { user: ApiUser; onSignOut: () => void }) {
   const insets = useSafeAreaInsets();
   const [tab, setTab] = useState<Tab>('home');
@@ -189,6 +199,8 @@ function CoDrive({ user, onSignOut }: { user: ApiUser; onSignOut: () => void }) 
   const [removeId, setRemoveId] = useState<string | null>(null);
   const [removing, setRemoving] = useState(false);
   const [removeError, setRemoveError] = useState<string | null>(null);
+  const [roleBusy, setRoleBusy] = useState(false);
+  const [roleError, setRoleError] = useState<string | null>(null);
   const [tripName, setTripName] = useState('');
   const [draftPlace, setDraftPlace] = useState<Spot | null>(null);
   const [expenseType, setExpenseType] = useState<ExpenseType | null>(null);
@@ -404,8 +416,9 @@ function CoDrive({ user, onSignOut }: { user: ApiUser; onSignOut: () => void }) 
       guests: settings.crew
         .filter((member) => !accounts.has(member.id))
         .map((member) => ({ id: member.id, name: member.name })),
-      start: placeFor(settings.start, settings.startSpot),
-      end: placeFor(settings.end, settings.endSpot),
+      // Only the owner can change the start and end, so they are only sent when they changed.
+      ...endpointChange(trip, 'start', settings.fixedStart ? placeFor(settings.start, settings.startSpot) : null),
+      ...endpointChange(trip, 'end', settings.fixedEnd ? placeFor(settings.end, settings.endSpot) : null),
     });
     updateTrip(trip.id, () => tripFromApi(saved));
   };
@@ -474,6 +487,24 @@ function CoDrive({ user, onSignOut }: { user: ApiUser; onSignOut: () => void }) 
   };
 
   const removeStop = removeId ? trip?.waypoints.find((stop) => stop.id === removeId) : undefined;
+
+  /** Makes a stop the fixed Start or End, or turns that off if it already is. Only the owner sees the buttons. */
+  const toggleRole = async (id: string, role: 'start' | 'end') => {
+    if (!trip || roleBusy) return;
+    const tripId = trip.id;
+    const stop = trip.waypoints.find((item) => item.id === id);
+    if (!stop) return;
+    setRoleBusy(true);
+    setRoleError(null);
+    try {
+      const saved = await setStopRole(tripId, id, stop.role === role ? null : role);
+      updateTrip(tripId, () => tripFromApi(saved));
+    } catch (error) {
+      setRoleError(error instanceof Error ? error.message : 'Could not change the start or end');
+    } finally {
+      setRoleBusy(false);
+    }
+  };
 
   const askRemove = (id: string) => {
     setRemoveError(null);
@@ -596,6 +627,9 @@ function CoDrive({ user, onSignOut }: { user: ApiUser; onSignOut: () => void }) 
                 onPickPlace={pickPlace}
                 onVote={vote}
                 onRemove={askRemove}
+                onSetRole={toggleRole}
+                roleBusy={roleBusy}
+                notice={roleError}
                 userId={user.id}
                 onInvite={() => setInviteOpen(true)}
               />

@@ -377,12 +377,17 @@ app.patch('/api/trips/:id', wrap(async (req, res) => {
   try {
     await client.query('BEGIN');
     const member = await client.query(
-      'SELECT trip_id FROM trip_members WHERE trip_id = $1 AND user_id = $2',
+      'SELECT role FROM trip_members WHERE trip_id = $1 AND user_id = $2',
       [tripId, user.id],
     );
     if (member.rowCount === 0) {
       await client.query('ROLLBACK');
       res.status(404).json({ error: 'Trip not found' });
+      return;
+    }
+    if (endpoints.length > 0 && member.rows[0].role !== 'owner') {
+      await client.query('ROLLBACK');
+      res.status(403).json({ error: 'Only the trip owner can change the start and end' });
       return;
     }
     // Locks the trip so two saves cannot both add a Start or pick the same stop order.
@@ -392,7 +397,8 @@ app.patch('/api/trips/:id', wrap(async (req, res) => {
     }
     for (const { role, stop } of endpoints) {
       if (!stop) {
-        await client.query('DELETE FROM waypoints WHERE trip_id = $1 AND role = $2', [tripId, role]);
+        // No longer fixed: the stop stays on the trip as an ordinary stop, and the route picks the start or end.
+        await client.query('UPDATE waypoints SET role = NULL WHERE trip_id = $1 AND role = $2', [tripId, role]);
         continue;
       }
       const updated = await client.query(
@@ -408,6 +414,63 @@ app.patch('/api/trips/:id', wrap(async (req, res) => {
         );
       }
     }
+    await client.query('COMMIT');
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
+  res.json(await tripDetail(tripId, user.id));
+}));
+
+/**
+ * Makes a stop the trip's fixed Start or End, or stops it being one. `{ "role": "start" | "end" | null }`.
+ * Only the owner can do this. Whatever stop held that role before goes back to being an ordinary stop.
+ */
+app.put('/api/trips/:id/waypoints/:waypointId/role', wrap(async (req, res) => {
+  const user = currentUser(res);
+  const { id: tripId, waypointId } = req.params;
+  if (!isUuid(tripId) || !isUuid(waypointId)) {
+    res.status(400).json({ error: 'trip and stop ids must be uuids' });
+    return;
+  }
+  const role = req.body?.role;
+  if (role !== null && role !== 'start' && role !== 'end') {
+    res.status(400).json({ error: 'role must be "start", "end", or null' });
+    return;
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const found = await client.query(
+      `SELECT w.latitude, m.role AS member_role FROM waypoints w
+       JOIN trip_members m ON m.trip_id = w.trip_id AND m.user_id = $3
+       WHERE w.id = $2 AND w.trip_id = $1`,
+      [tripId, waypointId, user.id],
+    );
+    if (found.rowCount === 0) {
+      await client.query('ROLLBACK');
+      res.status(404).json({ error: 'Stop not found' });
+      return;
+    }
+    if (found.rows[0].member_role !== 'owner') {
+      await client.query('ROLLBACK');
+      res.status(403).json({ error: 'Only the trip owner can change the start and end' });
+      return;
+    }
+    if (role && found.rows[0].latitude === null) {
+      await client.query('ROLLBACK');
+      res.status(400).json({ error: 'That stop has no location, so it cannot be the start or end' });
+      return;
+    }
+    // Locks the trip so two changes cannot both claim the Start or End.
+    await client.query('SELECT id FROM trips WHERE id = $1 FOR UPDATE', [tripId]);
+    if (role) {
+      await client.query('UPDATE waypoints SET role = NULL WHERE trip_id = $1 AND role = $2 AND id <> $3', [tripId, role, waypointId]);
+    }
+    await client.query('UPDATE waypoints SET role = $3 WHERE trip_id = $1 AND id = $2', [tripId, waypointId, role]);
     await client.query('COMMIT');
   } catch (error) {
     await client.query('ROLLBACK');

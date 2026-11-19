@@ -1,5 +1,5 @@
 import { useMemo, useRef, useState } from 'react';
-import { Image, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { Image, ScrollView, StyleSheet, Switch, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 import type { Spot } from '../api';
@@ -11,12 +11,16 @@ import { WheelPicker } from '../components/WheelPicker';
 import { crewFromName, crewMemberLocked, isGuest } from '../crew';
 import { parseTripDates } from '../dates';
 import { joinLimit, setLimit, splitLimit, toggleDriver } from '../drivers';
+import { routedStops } from '../route';
 import { endpoint, spotFor, spotOf } from '../stops';
 import { C, layout } from '../theme';
 import type { Crew, Driver, Trip } from '../types';
 
 export type TripSettings = {
   title: string;
+  /** When off, the route decides where the trip starts (or ends) and the text below is ignored. */
+  fixedStart: boolean;
+  fixedEnd: boolean;
   start: string;
   end: string;
   /** Only set while the text still matches a place picked from the suggestions. */
@@ -36,6 +40,8 @@ const MAX_IMAGE_LENGTH = 3_000_000;
 
 type Draft = {
   title: string;
+  fixedStart: boolean;
+  fixedEnd: boolean;
   start: string;
   end: string;
   startSpot: Spot | null;
@@ -54,6 +60,8 @@ function draftFrom(trip: Trip): Draft {
   const endStop = endpoint(trip, 'end');
   return {
     title: trip.title,
+    fixedStart: Boolean(startStop),
+    fixedEnd: Boolean(endStop),
     start: startStop?.title ?? '',
     end: endStop?.title ?? '',
     startSpot: spotOf(startStop),
@@ -74,10 +82,13 @@ function snapshot(draft: Draft) {
   const crewOrder = draft.crew.map((member) => member.id);
   return JSON.stringify({
     title: draft.title.trim(),
-    start,
-    end,
-    startSpot: spotFor(start, draft.startSpot),
-    endSpot: spotFor(end, draft.endSpot),
+    fixedStart: draft.fixedStart,
+    fixedEnd: draft.fixedEnd,
+    // Text in a field that is switched off is not saved, so it doesn't count as a change.
+    start: draft.fixedStart ? start : '',
+    end: draft.fixedEnd ? end : '',
+    startSpot: draft.fixedStart ? spotFor(start, draft.startSpot) : null,
+    endSpot: draft.fixedEnd ? spotFor(end, draft.endSpot) : null,
     startDate: draft.startDate,
     endDate: draft.endDate,
     budget: draft.budget.trim() === '' ? 0 : Number(draft.budget),
@@ -123,19 +134,22 @@ export function TripSettingsScreen({
   const budgetValue = budgetText === '' ? 0 : Number(budgetText);
   const budgetOk = budgetText === '' || (Number.isFinite(budgetValue) && budgetValue > 0);
   const datesOk = !draft.startDate || !draft.endDate || draft.endDate >= draft.startDate;
-  const valid = draft.title.trim().length > 0 && budgetOk && datesOk && draft.crew.length > 0;
-  const dirty = snapshot(draft) !== snapshot(initial);
-
   const start = draft.start.trim();
   const end = draft.end.trim();
   const startSpot = spotFor(start, draft.startSpot);
   const endSpot = spotFor(end, draft.endSpot);
-  const routeHint =
-    !start || !end
-      ? 'Fill in both Start and End to build the route.'
-      : !startSpot || !endSpot
-        ? 'Pick Start and End from the suggestions so the route can be drawn.'
-        : null;
+  // A fixed Start or End has to be a real place, picked from the suggestions.
+  const endpointsOk = (!draft.fixedStart || startSpot !== null) && (!draft.fixedEnd || endSpot !== null);
+  const valid = draft.title.trim().length > 0 && budgetOk && datesOk && endpointsOk && draft.crew.length > 0;
+  const dirty = snapshot(draft) !== snapshot(initial);
+  const owner = trip.role === 'owner';
+
+  // Where the route starts and ends by itself, for whichever of the two isn't fixed.
+  const routed = routedStops(trip);
+  const autoStart = routed.length >= 2 && routed[0].role !== 'start' ? routed[0].title : null;
+  const autoEnd = routed.length >= 2 && routed[routed.length - 1].role !== 'end' ? routed[routed.length - 1].title : null;
+  const autoHint = (place: string | null) =>
+    place ? `Set by the route: ${place}` : 'Set by the route once at least two stops are selected.';
 
   const addCrew = () => {
     const person = crewFromName(crewName, draft.crew.length);
@@ -197,6 +211,8 @@ export function TripSettingsScreen({
     try {
       await onSave({
         title: draft.title.trim(),
+        fixedStart: draft.fixedStart,
+        fixedEnd: draft.fixedEnd,
         start,
         end,
         startSpot,
@@ -229,21 +245,52 @@ export function TripSettingsScreen({
         <Text style={styles.sub}>Only the name is needed. Fill in the rest whenever you are ready.</Text>
 
         <Field label="Trip name" value={draft.title} onChangeText={(value) => change({ title: value })} placeholder="North Shore Getaway" />
-        <AddressField
-          label="Start"
-          value={draft.start}
-          onChangeText={(value) => change({ start: value })}
-          placeholder="Ala Moana"
-          onPick={(place) => change({ startSpot: { name: place.name, latitude: place.latitude, longitude: place.longitude } })}
-        />
-        <AddressField
-          label="End"
-          value={draft.end}
-          onChangeText={(value) => change({ end: value })}
-          placeholder="Turtle Bay"
-          onPick={(place) => change({ endSpot: { name: place.name, latitude: place.latitude, longitude: place.longitude } })}
-        />
-        {routeHint ? <Text style={styles.hint}>{routeHint}</Text> : null}
+        <View style={styles.toggleRow}>
+          <Text style={styles.toggleLabel}>Fixed start</Text>
+          <Switch
+            value={draft.fixedStart}
+            onValueChange={(value) => change({ fixedStart: value })}
+            disabled={!owner}
+            trackColor={{ true: C.teal, false: C.line }}
+            accessibilityLabel="Fixed start"
+          />
+        </View>
+        {draft.fixedStart && owner ? (
+          <AddressField
+            label="Start"
+            value={draft.start}
+            onChangeText={(value) => change({ start: value })}
+            placeholder="Ala Moana"
+            onPick={(place) => change({ startSpot: { name: place.name, latitude: place.latitude, longitude: place.longitude } })}
+          />
+        ) : null}
+        <Text style={styles.hint}>
+          {draft.fixedStart ? (owner ? (startSpot ? null : 'Pick the start from the suggestions.') : `Start: ${draft.start}`) : autoHint(autoStart)}
+        </Text>
+
+        <View style={styles.toggleRow}>
+          <Text style={styles.toggleLabel}>Fixed end</Text>
+          <Switch
+            value={draft.fixedEnd}
+            onValueChange={(value) => change({ fixedEnd: value })}
+            disabled={!owner}
+            trackColor={{ true: C.teal, false: C.line }}
+            accessibilityLabel="Fixed end"
+          />
+        </View>
+        {draft.fixedEnd && owner ? (
+          <AddressField
+            label="End"
+            value={draft.end}
+            onChangeText={(value) => change({ end: value })}
+            placeholder="Turtle Bay"
+            onPick={(place) => change({ endSpot: { name: place.name, latitude: place.latitude, longitude: place.longitude } })}
+          />
+        ) : null}
+        <Text style={styles.hint}>
+          {draft.fixedEnd ? (owner ? (endSpot ? null : 'Pick the end from the suggestions.') : `End: ${draft.end}`) : autoHint(autoEnd)}
+        </Text>
+        {!owner ? <Text style={styles.hint}>Only the trip owner can change the start and end.</Text> : null}
         <DateField
           label="Start date"
           value={draft.startDate}
@@ -395,7 +442,9 @@ export function TripSettingsScreen({
               ? 'Give the trip a name.'
               : !budgetOk
                 ? 'The budget must be a number above 0, or left empty.'
-                : 'The end date cannot be before the start date.'}
+                : !endpointsOk
+                  ? 'Pick the fixed start and end from the suggestions, or switch them off.'
+                  : 'The end date cannot be before the start date.'}
           </Text>
         ) : null}
         {saveError ? <Text style={styles.hint}>{saveError}</Text> : null}
@@ -413,6 +462,17 @@ export function TripSettingsScreen({
 }
 
 const styles = StyleSheet.create({
+  toggleRow: {
+    marginTop: 16,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  toggleLabel: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: C.ink,
+  },
   title: {
     fontSize: 26,
     fontWeight: '700',
