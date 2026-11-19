@@ -1,5 +1,5 @@
 import { useMemo, useRef, useState, type ReactNode } from 'react';
-import { Image, ScrollView, StyleSheet, Switch, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { Dimensions, Image, ScrollView, StyleSheet, Switch, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 import type { Spot } from '../api';
@@ -14,6 +14,7 @@ import { joinLimit, setLimit, splitLimit, toggleDriver } from '../drivers';
 import { routedStops } from '../route';
 import { endpoint, spotFor, spotOf } from '../stops';
 import { C, layout } from '../theme';
+import { useKeyboardTop } from '../useKeyboard';
 import type { Crew, Driver, Trip } from '../types';
 
 export type TripSettings = {
@@ -117,6 +118,18 @@ export function TripSettingsScreen({
   focus?: 'budget';
 }) {
   const scroller = useRef<ScrollView>(null);
+  // Where the Start and End fields sit in the scrolling content, so focusing one can bring it above the keyboard.
+  const fieldY = useRef<{ start?: number; end?: number }>({});
+  const keyboardTop = useKeyboardTop();
+  const keyboardRoom = keyboardTop === null ? 0 : Math.max(0, Dimensions.get('window').height - keyboardTop);
+  const scrollTo = (y: number) => (scroller.current as unknown as { scrollTo?: (to: { y: number; animated: boolean }) => void } | null)?.scrollTo?.({ y, animated: true });
+  /** Moves the field near the top, leaving room for its suggestions above the keyboard. Waits for the keyboard to open first. */
+  const revealField = (which: 'start' | 'end') => {
+    setTimeout(() => {
+      const y = fieldY.current[which];
+      if (y !== undefined) scrollTo(Math.max(0, y - 12));
+    }, 300);
+  };
   const initial = useMemo(() => draftFrom(trip), [trip]);
   const [draft, setDraft] = useState<Draft>(initial);
   const [photoNote, setPhotoNote] = useState<string | null>(null);
@@ -240,7 +253,8 @@ export function TripSettingsScreen({
       <ScrollView
         ref={scroller}
         style={layout.fill}
-        contentContainerStyle={layout.scroll}
+        // Extra room at the bottom while the keyboard is open, so the last fields can scroll above it.
+        contentContainerStyle={[layout.scroll, keyboardRoom > 0 && { paddingBottom: keyboardRoom + 24 }]}
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}
       >
@@ -264,14 +278,17 @@ export function TripSettingsScreen({
             />
           </View>
           {draft.fixedStart && owner ? (
-            <AddressField
-              label="Start"
-              value={draft.start}
-              onChangeText={(value) => change({ start: value })}
-              placeholder="Ala Moana"
-              onPick={(place) => change({ startSpot: { name: place.name, latitude: place.latitude, longitude: place.longitude } })}
-              picked={startSpot !== null}
-            />
+            <View onLayout={(event) => (fieldY.current.start = event.nativeEvent.layout.y)}>
+              <AddressField
+                label="Start"
+                value={draft.start}
+                onChangeText={(value) => change({ start: value })}
+                placeholder="Ala Moana"
+                onPick={(place) => change({ startSpot: { name: place.name, latitude: place.latitude, longitude: place.longitude } })}
+                picked={startSpot !== null}
+                onFocus={() => revealField('start')}
+              />
+            </View>
           ) : null}
           <Text style={styles.hint}>
             {draft.fixedStart ? (owner ? (startSpot ? null : 'Pick the start from the suggestions.') : `Start: ${draft.start}`) : autoHint(autoStart)}
@@ -288,14 +305,17 @@ export function TripSettingsScreen({
             />
           </View>
           {draft.fixedEnd && owner ? (
-            <AddressField
-              label="End"
-              value={draft.end}
-              onChangeText={(value) => change({ end: value })}
-              placeholder="Turtle Bay"
-              onPick={(place) => change({ endSpot: { name: place.name, latitude: place.latitude, longitude: place.longitude } })}
-              picked={endSpot !== null}
-            />
+            <View onLayout={(event) => (fieldY.current.end = event.nativeEvent.layout.y)}>
+              <AddressField
+                label="End"
+                value={draft.end}
+                onChangeText={(value) => change({ end: value })}
+                placeholder="Turtle Bay"
+                onPick={(place) => change({ endSpot: { name: place.name, latitude: place.latitude, longitude: place.longitude } })}
+                picked={endSpot !== null}
+                onFocus={() => revealField('end')}
+              />
+            </View>
           ) : null}
           <Text style={styles.hint}>
             {draft.fixedEnd ? (owner ? (endSpot ? null : 'Pick the end from the suggestions.') : `End: ${draft.end}`) : autoHint(autoEnd)}

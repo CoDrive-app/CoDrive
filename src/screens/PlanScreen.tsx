@@ -1,3 +1,4 @@
+import { useRef, type ComponentRef } from 'react';
 import { Image, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { C, cardShadow, layout } from '../theme';
@@ -9,6 +10,7 @@ import { StopSearch } from '../components/StopSearch';
 import { TrashIcon } from '../components/TrashIcon';
 import { TripHeader } from '../components/TripHeader';
 import { VoteButton } from '../components/VoteButton';
+import { useKeyboardLift } from '../useKeyboard';
 
 function removeLabel(stop: Waypoint) {
   if (stop.role === 'start') return 'Remove start';
@@ -47,6 +49,9 @@ export function PlanScreen({
   onInvite: () => void;
 }) {
   const owner = trip.role === 'owner';
+  // Lifts the search box and its suggestions above the keyboard, where the keyboard would cover them.
+  const composer = useRef<ComponentRef<typeof View>>(null);
+  const lift = useKeyboardLift(composer);
   // Only the owner can remove the Start or End. Anyone can remove their own suggestions, and the owner anyone's.
   const canRemove = (stop: Waypoint) => (stop.role ? owner : owner || stop.proposedById === userId);
   return (
@@ -122,7 +127,7 @@ export function PlanScreen({
           </View>
         ))}
       </ScrollView>
-      <View style={styles.composer}>
+      <View ref={composer} style={[styles.composer, { marginBottom: lift }]}>
         <StopSearch
           value={draft}
           onChangeText={onDraft}
