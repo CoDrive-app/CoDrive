@@ -8,7 +8,8 @@ const SETTLE_MS = 120;
 
 /**
  * A scroll wheel of whole numbers that snaps to one at a time, with the chosen one in the middle band.
- * `count` numbers are offered, starting at `min` (0 unless given). The parent owns `value`.
+ * `count` numbers are offered, starting at `min` (0 unless given) and going up by `step` (1 unless given).
+ * A value between steps shows at the nearest one. The parent owns `value`.
  */
 export function WheelPicker({
   value,
@@ -18,6 +19,7 @@ export function WheelPicker({
   label,
   unit,
   pad,
+  step = 1,
 }: {
   value: number;
   count: number;
@@ -30,11 +32,14 @@ export function WheelPicker({
   unit: string;
   /** Pad numbers with a leading zero, like 05. */
   pad?: boolean;
+  /** How far apart the numbers are, like 5 for 0, 5, 10… */
+  step?: number;
 }) {
   const scroller = useRef<ScrollView>(null);
   const settle = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Position on the wheel, counting from the top.
-  const safe = Math.min(Math.max(value - min, 0), count - 1);
+  const safe = Math.min(Math.max(Math.round((value - min) / step), 0), count - 1);
+  const at = (index: number) => min + index * step;
 
   // Keep the wheel on the value when it changes from outside, or when the number of choices changes.
   useEffect(() => {
@@ -54,12 +59,12 @@ export function WheelPicker({
     if (settle.current) clearTimeout(settle.current);
     settle.current = setTimeout(() => {
       const next = Math.min(count - 1, Math.max(0, Math.round(y / ITEM_HEIGHT)));
-      if (next !== safe) onChange(next + min);
+      if (next !== safe) onChange(at(next));
     }, SETTLE_MS);
   };
 
   return (
-    <View style={styles.wrap} accessibilityLabel={`${label}: ${safe + min}`}>
+    <View style={styles.wrap} accessibilityLabel={`${label}: ${at(safe)}`}>
       <View style={styles.wheel}>
         <View pointerEvents="none" style={styles.band} />
         <ScrollView
@@ -76,7 +81,7 @@ export function WheelPicker({
           {Array.from({ length: count }, (_, index) => (
             <View key={index} style={styles.item}>
               <Text style={[styles.number, index === safe && styles.numberOn]}>
-                {pad ? String(index + min).padStart(2, '0') : index + min}
+                {pad ? String(at(index)).padStart(2, '0') : at(index)}
               </Text>
             </View>
           ))}
