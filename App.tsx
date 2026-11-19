@@ -89,7 +89,8 @@ const STOP_LOOKS = {
   suggestion: { detail: 'Suggested stop', image: IMG.lake, time: '—', stop: 'New suggestion', pin: '#8B6CC4' },
 };
 
-function stopFromApi(row: ApiWaypoint): Waypoint {
+/** `groupSize` is how many people are on the trip, which sets how many votes make a majority. */
+function stopFromApi(row: ApiWaypoint, groupSize: number): Waypoint {
   const role = row.role ?? undefined;
   return {
     id: row.id,
@@ -100,17 +101,17 @@ function stopFromApi(row: ApiWaypoint): Waypoint {
     likes: row.likes,
     dislikes: row.dislikes,
     vote: row.my_vote,
-    // Start and End are always on the route. Other stops follow your vote.
-    status: role ? 'selected' : statusFor(row.my_vote),
+    // Start and End are always on the route. Other stops follow the crew's majority vote.
+    status: role ? 'selected' : statusFor(row.likes, row.dislikes, groupSize),
     ...(row.latitude !== null && row.longitude !== null ? { latitude: row.latitude, longitude: row.longitude } : {}),
     role,
   };
 }
 
 /** Start first, End last, and suggestions in the order they were added. */
-function stopsFromApi(rows: ApiWaypoint[]): Waypoint[] {
+function stopsFromApi(rows: ApiWaypoint[], groupSize: number): Waypoint[] {
   const rank = (row: ApiWaypoint) => (row.role === 'start' ? 0 : row.role === 'end' ? 2 : 1);
-  return [...rows].sort((a, b) => rank(a) - rank(b) || a.sequence_order - b.sequence_order).map(stopFromApi);
+  return [...rows].sort((a, b) => rank(a) - rank(b) || a.sequence_order - b.sequence_order).map((row) => stopFromApi(row, groupSize));
 }
 
 function datesText(start: string | null, end: string | null) {
@@ -122,7 +123,8 @@ function datesText(start: string | null, end: string | null) {
 
 /** The trip as the server has it. The trip list leaves out stops and expenses; `getTrip` fills them in. */
 function tripFromApi(row: ApiTrip | ApiTripDetail): Trip {
-  const waypoints = 'waypoints' in row ? stopsFromApi(row.waypoints) : [];
+  const crew = crewFromApi(row.members, row.guests);
+  const waypoints = 'waypoints' in row ? stopsFromApi(row.waypoints, crew.length) : [];
   const start = waypoints.find((stop) => stop.role === 'start')?.title;
   const end = waypoints.find((stop) => stop.role === 'end')?.title;
   return {
@@ -135,7 +137,7 @@ function tripFromApi(row: ApiTrip | ApiTripDetail): Trip {
     startDate: row.start_date ?? undefined,
     endDate: row.end_date ?? undefined,
     image: row.image ?? IMG.road,
-    crew: crewFromApi(row.members, row.guests),
+    crew,
     waypoints,
     expenses: 'expenses' in row ? row.expenses.map(expenseFromApi) : [],
     budget: Number(row.budget) > 0 ? Number(row.budget) : 0,
@@ -422,7 +424,7 @@ function CoDrive({ user, onSignOut }: { user: ApiUser; onSignOut: () => void }) 
       updateTrip(tripId, (current) => {
         const end = current.waypoints.filter((stop) => stop.role === 'end');
         const rest = current.waypoints.filter((stop) => stop.role !== 'end');
-        return { ...current, waypoints: [...rest, stopFromApi(saved), ...end] };
+        return { ...current, waypoints: [...rest, stopFromApi(saved, current.crew.length), ...end] };
       });
     } catch (error) {
       setStopError(error instanceof Error ? error.message : 'Could not add the stop');
@@ -442,7 +444,8 @@ function CoDrive({ user, onSignOut }: { user: ApiUser; onSignOut: () => void }) 
     const tripId = trip.id;
     const before = trip.waypoints.find((stop) => stop.id === id);
     if (!before) return;
-    const after = castVote(before, direction);
+    const groupSize = trip.crew.length;
+    const after = castVote(before, direction, groupSize);
     const replace = (next: Waypoint) =>
       updateTrip(tripId, (current) => ({
         ...current,
@@ -450,7 +453,7 @@ function CoDrive({ user, onSignOut }: { user: ApiUser; onSignOut: () => void }) 
       }));
     replace(before.role ? { ...after, status: 'selected' } : after);
     voteWaypoint(tripId, id, after.vote)
-      .then((saved) => replace(stopFromApi(saved)))
+      .then((saved) => replace(stopFromApi(saved, groupSize)))
       .catch(() => replace(before));
   };
 
