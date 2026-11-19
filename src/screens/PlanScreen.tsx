@@ -1,3 +1,4 @@
+import { useRef, type ComponentRef } from 'react';
 import { Image, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { C, cardShadow, layout } from '../theme';
@@ -9,6 +10,7 @@ import { StopSearch } from '../components/StopSearch';
 import { TrashIcon } from '../components/TrashIcon';
 import { TripHeader } from '../components/TripHeader';
 import { VoteButton } from '../components/VoteButton';
+import { useKeyboardLift } from '../useKeyboard';
 
 function removeLabel(stop: Waypoint) {
   if (stop.role === 'start') return 'Remove start';
@@ -20,7 +22,6 @@ export function PlanScreen({
   trip,
   draft,
   onDraft,
-  onAdd,
   onPickPlace,
   onVote,
   onRemove,
@@ -33,7 +34,6 @@ export function PlanScreen({
   trip: Trip;
   draft: string;
   onDraft: (value: string) => void;
-  onAdd: () => void;
   onPickPlace: (place: AddressSuggestion) => void;
   onVote: (id: string, direction: 'up' | 'down') => void;
   /** Asks to remove a stop. */
@@ -49,6 +49,9 @@ export function PlanScreen({
   onInvite: () => void;
 }) {
   const owner = trip.role === 'owner';
+  // Lifts the search box and its suggestions above the keyboard, where the keyboard would cover them.
+  const composer = useRef<ComponentRef<typeof View>>(null);
+  const lift = useKeyboardLift(composer);
   // Only the owner can remove the Start or End. Anyone can remove their own suggestions, and the owner anyone's.
   const canRemove = (stop: Waypoint) => (stop.role ? owner : owner || stop.proposedById === userId);
   return (
@@ -66,6 +69,9 @@ export function PlanScreen({
               <Text style={styles.meta}>
                 {stop.note || stop.detail} · Proposed by {stop.proposedBy}
               </Text>
+              {typeof stop.latitude !== 'number' ? (
+                <Text style={styles.noLocation}>No location, so this stop can't be on the route.</Text>
+              ) : null}
               {owner && typeof stop.latitude === 'number' ? (
                 <View style={styles.roleRow}>
                   {(['start', 'end'] as const).map((role) => {
@@ -121,11 +127,10 @@ export function PlanScreen({
           </View>
         ))}
       </ScrollView>
-      <View style={styles.composer}>
+      <View ref={composer} style={[styles.composer, { marginBottom: lift }]}>
         <StopSearch
           value={draft}
           onChangeText={onDraft}
-          onSubmit={onAdd}
           onPick={onPickPlace}
           anchor={searchAnchor(trip)}
         />
@@ -145,6 +150,12 @@ const styles = StyleSheet.create({
   photo: {
     width: '100%',
     height: 168,
+  },
+  noLocation: {
+    marginTop: 4,
+    fontSize: 12,
+    fontWeight: '600',
+    color: C.orange,
   },
   notice: {
     marginBottom: 10,
