@@ -359,7 +359,6 @@ function CoDrive({ user, onSignOut }: { user: ApiUser; onSignOut: () => void }) 
   const expenseReady =
     expenseType !== null &&
     activePayers.length > 0 &&
-    expenseName.trim().length > 0 &&
     !Number.isNaN(amountValue) &&
     amountValue > 0;
 
@@ -543,6 +542,8 @@ function CoDrive({ user, onSignOut }: { user: ApiUser; onSignOut: () => void }) 
     const notes = expenseNotes.trim();
     const paidBy = orderPayers(activePayers, payers);
     const category = expenseType;
+    // A blank name falls back to the type, like "Gas".
+    const title = expenseName.trim() || (EXPENSE_TYPES.find((item) => item.value === category)?.label ?? 'Expense');
     let expenseId = Date.now().toString();
 
     if (isServerTrip(trip.id)) {
@@ -553,7 +554,7 @@ function CoDrive({ user, onSignOut }: { user: ApiUser; onSignOut: () => void }) 
           paid_by_user: paidBy.join(', '),
           amount: amountValue,
           category,
-          title: expenseName.trim(),
+          title,
           description: notes,
           photos: expensePhotos,
         });
@@ -571,7 +572,7 @@ function CoDrive({ user, onSignOut }: { user: ApiUser; onSignOut: () => void }) 
       expenses: [
         {
           id: expenseId,
-          title: expenseName.trim(),
+          title,
           paidBy,
           notes,
           amount: amountValue,
