@@ -1,13 +1,20 @@
 import { Image, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { C, cardShadow, layout } from '../theme';
-import type { Trip } from '../types';
+import type { Trip, Waypoint } from '../types';
 import type { AddressSuggestion } from '../api';
 import { searchAnchor } from '../route';
 import { StatusBadge } from '../components/StatusBadge';
 import { StopSearch } from '../components/StopSearch';
+import { TrashIcon } from '../components/TrashIcon';
 import { TripHeader } from '../components/TripHeader';
 import { VoteButton } from '../components/VoteButton';
+
+function removeLabel(stop: Waypoint) {
+  if (stop.role === 'start') return 'Remove start';
+  if (stop.role === 'end') return 'Remove end';
+  return 'Remove suggestion';
+}
 
 export function PlanScreen({
   trip,
@@ -16,6 +23,8 @@ export function PlanScreen({
   onAdd,
   onPickPlace,
   onVote,
+  onRemove,
+  userId,
   onInvite,
 }: {
   trip: Trip;
@@ -24,8 +33,15 @@ export function PlanScreen({
   onAdd: () => void;
   onPickPlace: (place: AddressSuggestion) => void;
   onVote: (id: string, direction: 'up' | 'down') => void;
+  /** Asks to remove a stop. */
+  onRemove: (id: string) => void;
+  /** The signed-in account. You can remove your own suggestions; the owner can remove any stop. */
+  userId: string;
   onInvite: () => void;
 }) {
+  const owner = trip.role === 'owner';
+  // Only the owner can remove the Start or End. Anyone can remove their own suggestions, and the owner anyone's.
+  const canRemove = (stop: Waypoint) => (stop.role ? owner : owner || stop.proposedById === userId);
   return (
     <View style={layout.fill}>
       <ScrollView style={layout.fill} contentContainerStyle={layout.scroll} showsVerticalScrollIndicator={false}>
@@ -55,6 +71,18 @@ export function PlanScreen({
                   onPress={() => onVote(stop.id, 'down')}
                   label={`Thumbs down ${stop.title}`}
                 />
+                {canRemove(stop) ? (
+                  <TouchableOpacity
+                    style={styles.remove}
+                    onPress={() => onRemove(stop.id)}
+                    activeOpacity={0.6}
+                    hitSlop={8}
+                    accessibilityRole="button"
+                    accessibilityLabel={`${removeLabel(stop)}: ${stop.title}`}
+                  >
+                    <TrashIcon />
+                  </TouchableOpacity>
+                ) : null}
               </View>
             </View>
           </View>
@@ -84,6 +112,10 @@ const styles = StyleSheet.create({
   photo: {
     width: '100%',
     height: 168,
+  },
+  remove: {
+    marginLeft: 'auto',
+    padding: 6,
   },
   body: {
     paddingHorizontal: 14,
