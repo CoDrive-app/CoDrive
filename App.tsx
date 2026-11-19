@@ -31,7 +31,7 @@ import {
 } from './src/api';
 import { MapBackdrop } from './src/components/MapBackdrop';
 import { TabBar } from './src/components/TabBar';
-import { IMG } from './src/data';
+import { IMG, imageFor } from './src/data';
 import { formatIso, formatTripDates } from './src/dates';
 import { currentDrivers, formatLimit } from './src/drivers';
 import { EXPENSE_TYPES, orderPayers, payerOptions, togglePayer } from './src/expenses';
@@ -99,6 +99,9 @@ function stopFromApi(row: ApiWaypoint, groupSize: number): Waypoint {
     id: row.id,
     title: row.name,
     ...STOP_LOOKS[role ?? 'suggestion'],
+    // A picture of the kind of place it is, when known. Otherwise the start, end or suggestion picture.
+    image: imageFor(row.category, row.id) ?? STOP_LOOKS[role ?? 'suggestion'].image,
+    category: row.category ?? undefined,
     note: row.note || undefined,
     proposedBy: row.proposed_by ?? 'Someone',
     proposedById: row.proposed_by_id ?? undefined,
@@ -426,7 +429,7 @@ function CoDrive({ user, onSignOut }: { user: ApiUser; onSignOut: () => void }) 
 
   const pickPlace = (place: AddressSuggestion) => {
     setDraftStop(place.name);
-    setDraftPlace({ name: place.name, latitude: place.latitude, longitude: place.longitude });
+    setDraftPlace({ name: place.name, latitude: place.latitude, longitude: place.longitude, category: place.category });
     setStopNote('');
     setStopError(null);
     setNoteOpen(true);
@@ -447,6 +450,7 @@ function CoDrive({ user, onSignOut }: { user: ApiUser; onSignOut: () => void }) 
     try {
       const saved = await addWaypoint(tripId, {
         ...placeFor(title, spot)!,
+        category: spot.category ?? null,
         note: stopNote.trim(),
       });
       // New suggestions go before the End, where they will be after a reload.

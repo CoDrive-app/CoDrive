@@ -110,6 +110,8 @@ export type ApiWaypoint = {
   sequence_order: number;
   role: 'start' | 'end' | null;
   note: string;
+  /** What kind of place it is, or null when unknown. */
+  category: PlaceKind | null;
   /** The name of whoever suggested it, or null if their account is gone. */
   proposed_by: string | null;
   /** The account id of whoever suggested it, so the app knows whose suggestion it is. */
@@ -140,9 +142,11 @@ export type AddressSuggestion = {
   label: string;
   latitude: number;
   longitude: number;
+  /** What kind of place it is, when Geoapify says it is one the app has pictures for. */
+  category: PlaceKind | null;
 };
 
-export type Spot = { name: string; latitude: number; longitude: number };
+export type Spot = { name: string; latitude: number; longitude: number; category?: PlaceKind | null };
 
 /** Asks the CoDrive API for address suggestions. The API holds the Geoapify key, not the app. */
 export function searchAddresses(text: string, near?: { latitude: number; longitude: number } | null) {
@@ -236,7 +240,7 @@ export function removeTrip(id: string) {
 
 export function addWaypoint(
   tripId: string,
-  stop: ApiPlace & { note?: string; sequence_order?: number },
+  stop: ApiPlace & { note?: string; sequence_order?: number; category?: PlaceKind | null },
 ) {
   return request<ApiWaypoint>(`/api/trips/${tripId}/waypoints`, {
     method: 'POST',
