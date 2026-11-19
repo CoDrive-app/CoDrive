@@ -52,13 +52,11 @@ const ATTRIBUTION = [
   { label: '© OpenStreetMap contributors', url: 'https://www.openstreetmap.org/copyright' },
 ];
 
-/** Shown until a trip has routed stops. These pins aren't tappable, as they aren't stops on the trip. */
-const SAMPLE_STOPS: MapStop[] = [
-  { latitude: 21.593, longitude: -158.103, color: '#E2B045', label: 'Haleiwa' },
-  { latitude: 21.652, longitude: -158.063, color: '#3AA99A', label: "Shark's" },
-  { latitude: 21.665, longitude: -158.053, color: '#E26D5A', label: 'Pipeline' },
-  { latitude: 21.678, longitude: -158.041, color: '#5B7CFA', label: 'Sunset' },
-  { latitude: 21.705, longitude: -157.998, color: '#8B6CC4', label: 'Turtle Bay' },
+/** Until a trip has routed stops, the map shows an empty view of the US, Hawaii included, instead of a made-up route. */
+const DEFAULT_AREA = [
+  project(49.4, -124.8),
+  project(24.5, -66.9),
+  project(18.9, -160.2),
 ];
 
 type Pin = PinSpot & { color: string };
@@ -68,6 +66,7 @@ type TileLevels = { zoom: number; behind: number | null };
  * The trip map: street map tiles, with the stops and the driving route drawn over them, or straight dashes
  * while the route is not known. Drag to pan and pinch to zoom, or use the + and - buttons. Tap a pin to select
  * its stop. The target button jumps to your location, or back to the whole route when there is no location.
+ * With no routed stops, it shows the map alone.
  */
 export function TripMap({
   stops,
@@ -87,8 +86,7 @@ export function TripMap({
   selectedId?: string | null;
   onSelect?: (id: string | null) => void;
 } = {}) {
-  const live = Boolean(stops && stops.length > 0);
-  const shown = live && stops ? stops : SAMPLE_STOPS;
+  const shown = stops ?? [];
   const stopKey = shown.map((stop) => `${stop.latitude},${stop.longitude}`).join('|');
   const stopSpots = useMemo(() => shown.map((stop) => project(stop.latitude, stop.longitude)), [stopKey]);
   const road = useMemo(() => (path && path.length >= 2 ? path.map(([lat, lon]) => project(lat, lon)) : null), [path]);
@@ -123,7 +121,10 @@ export function TripMap({
   };
 
   const ready = size.w > 0 && size.h > 0;
-  const fitted = () => fitCamera(road ? [...road, ...stopSpots] : stopSpots, sizeRef.current, FIT_PADDING);
+  const fitted = () => {
+    const points = road ? [...road, ...stopSpots] : stopSpots;
+    return fitCamera(points.length > 0 ? points : DEFAULT_AREA, sizeRef.current, FIT_PADDING);
+  };
 
   useEffect(() => {
     moved.current = false;
