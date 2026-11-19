@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from 'react';
+import { useMemo, useRef, useState, type ReactNode } from 'react';
 import { Image, ScrollView, StyleSheet, Switch, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
@@ -104,10 +104,13 @@ function snapshot(draft: Draft) {
  */
 export function TripSettingsScreen({
   trip,
+  userId,
   onSave,
   focus,
 }: {
   trip: Trip;
+  /** The signed-in account, whose own driver setting they can always change. */
+  userId: string;
   /** Rejects if the trip could not be saved. */
   onSave: (settings: TripSettings) => Promise<void>;
   /** Scrolls to this field and puts the cursor in it when the screen opens. */
@@ -242,139 +245,146 @@ export function TripSettingsScreen({
         showsVerticalScrollIndicator={false}
       >
         <Text style={styles.title}>Trip settings</Text>
-        <Text style={styles.sub}>Only the name is needed. Fill in the rest whenever you are ready.</Text>
-
-        <Field label="Trip name" value={draft.title} onChangeText={(value) => change({ title: value })} placeholder="North Shore Getaway" />
-        <View style={styles.toggleRow}>
-          <Text style={styles.toggleLabel}>Fixed start</Text>
-          <Switch
-            value={draft.fixedStart}
-            onValueChange={(value) => change({ fixedStart: value })}
-            disabled={!owner}
-            trackColor={{ true: C.teal, false: C.line }}
-            accessibilityLabel="Fixed start"
-          />
-        </View>
-        {draft.fixedStart && owner ? (
-          <AddressField
-            label="Start"
-            value={draft.start}
-            onChangeText={(value) => change({ start: value })}
-            placeholder="Ala Moana"
-            onPick={(place) => change({ startSpot: { name: place.name, latitude: place.latitude, longitude: place.longitude } })}
-          />
-        ) : null}
-        <Text style={styles.hint}>
-          {draft.fixedStart ? (owner ? (startSpot ? null : 'Pick the start from the suggestions.') : `Start: ${draft.start}`) : autoHint(autoStart)}
+        <Text style={styles.sub}>
+          {owner
+            ? 'Only the name is needed. Fill in the rest whenever you are ready.'
+            : 'Only the trip owner can change these settings. You can still choose whether you drive, and for how long.'}
         </Text>
 
-        <View style={styles.toggleRow}>
-          <Text style={styles.toggleLabel}>Fixed end</Text>
-          <Switch
-            value={draft.fixedEnd}
-            onValueChange={(value) => change({ fixedEnd: value })}
-            disabled={!owner}
-            trackColor={{ true: C.teal, false: C.line }}
-            accessibilityLabel="Fixed end"
-          />
-        </View>
-        {draft.fixedEnd && owner ? (
-          <AddressField
-            label="End"
-            value={draft.end}
-            onChangeText={(value) => change({ end: value })}
-            placeholder="Turtle Bay"
-            onPick={(place) => change({ endSpot: { name: place.name, latitude: place.latitude, longitude: place.longitude } })}
-          />
-        ) : null}
-        <Text style={styles.hint}>
-          {draft.fixedEnd ? (owner ? (endSpot ? null : 'Pick the end from the suggestions.') : `End: ${draft.end}`) : autoHint(autoEnd)}
-        </Text>
-        {!owner ? <Text style={styles.hint}>Only the trip owner can change the start and end.</Text> : null}
-        <DateField
-          label="Start date"
-          value={draft.startDate}
-          onChange={(value) => change({ startDate: value, endDate: draft.endDate && draft.endDate < value ? '' : draft.endDate })}
-          placeholder="Select a date"
-        />
-        <DateField
-          label="End date"
-          value={draft.endDate}
-          onChange={(value) => change({ endDate: value })}
-          placeholder="Select a date"
-          min={draft.startDate}
-        />
-        <View onLayout={(event) => focus === 'budget' && scroller.current?.scrollTo({ y: Math.max(0, event.nativeEvent.layout.y - 12), animated: true })}>
-          <Field
-            label="Budget"
-            value={draft.budget}
-            onChangeText={(value) => change({ budget: value })}
-            placeholder="500"
-            numeric
-            autoFocus={focus === 'budget'}
-          />
-        </View>
+        <Locked locked={!owner}>
+          <Field label="Trip name" value={draft.title} onChangeText={(value) => change({ title: value })} placeholder="North Shore Getaway" />
+          <View style={styles.toggleRow}>
+            <Text style={styles.toggleLabel}>Fixed start</Text>
+            <Switch
+              value={draft.fixedStart}
+              onValueChange={(value) => change({ fixedStart: value })}
+              disabled={!owner}
+              trackColor={{ true: C.teal, false: C.line }}
+              accessibilityLabel="Fixed start"
+            />
+          </View>
+          {draft.fixedStart && owner ? (
+            <AddressField
+              label="Start"
+              value={draft.start}
+              onChangeText={(value) => change({ start: value })}
+              placeholder="Ala Moana"
+              onPick={(place) => change({ startSpot: { name: place.name, latitude: place.latitude, longitude: place.longitude } })}
+            />
+          ) : null}
+          <Text style={styles.hint}>
+            {draft.fixedStart ? (owner ? (startSpot ? null : 'Pick the start from the suggestions.') : `Start: ${draft.start}`) : autoHint(autoStart)}
+          </Text>
 
-        <Text style={styles.label}>Picture</Text>
-        <TouchableOpacity onPress={choosePhoto} activeOpacity={0.85} disabled={busy} accessibilityLabel="Change the trip picture">
-          <Image source={{ uri: draft.image }} style={styles.picture} />
-        </TouchableOpacity>
-        <Text style={styles.hint}>{busy ? 'Opening…' : 'Tap the picture to change it'}</Text>
-        {photoNote ? <Text style={styles.hint}>{photoNote}</Text> : null}
+          <View style={styles.toggleRow}>
+            <Text style={styles.toggleLabel}>Fixed end</Text>
+            <Switch
+              value={draft.fixedEnd}
+              onValueChange={(value) => change({ fixedEnd: value })}
+              disabled={!owner}
+              trackColor={{ true: C.teal, false: C.line }}
+              accessibilityLabel="Fixed end"
+            />
+          </View>
+          {draft.fixedEnd && owner ? (
+            <AddressField
+              label="End"
+              value={draft.end}
+              onChangeText={(value) => change({ end: value })}
+              placeholder="Turtle Bay"
+              onPick={(place) => change({ endSpot: { name: place.name, latitude: place.latitude, longitude: place.longitude } })}
+            />
+          ) : null}
+          <Text style={styles.hint}>
+            {draft.fixedEnd ? (owner ? (endSpot ? null : 'Pick the end from the suggestions.') : `End: ${draft.end}`) : autoHint(autoEnd)}
+          </Text>
+          <DateField
+            label="Start date"
+            value={draft.startDate}
+            onChange={(value) => change({ startDate: value, endDate: draft.endDate && draft.endDate < value ? '' : draft.endDate })}
+            placeholder="Select a date"
+          />
+          <DateField
+            label="End date"
+            value={draft.endDate}
+            onChange={(value) => change({ endDate: value })}
+            placeholder="Select a date"
+            min={draft.startDate}
+          />
+          <View onLayout={(event) => focus === 'budget' && scroller.current?.scrollTo({ y: Math.max(0, event.nativeEvent.layout.y - 12), animated: true })}>
+            <Field
+              label="Budget"
+              value={draft.budget}
+              onChangeText={(value) => change({ budget: value })}
+              placeholder="500"
+              numeric
+              autoFocus={focus === 'budget' && owner}
+            />
+          </View>
+
+          <Text style={styles.label}>Picture</Text>
+          <TouchableOpacity onPress={choosePhoto} activeOpacity={0.85} disabled={busy} accessibilityLabel="Change the trip picture">
+            <Image source={{ uri: draft.image }} style={styles.picture} />
+          </TouchableOpacity>
+          <Text style={styles.hint}>{busy ? 'Opening…' : 'Tap the picture to change it'}</Text>
+          {photoNote ? <Text style={styles.hint}>{photoNote}</Text> : null}
+        </Locked>
 
         <Text style={layout.section}>Crew</Text>
         <Text style={styles.sub}>Add the people coming on this trip. Save to keep the list.</Text>
-        {draft.crew.map((member) => {
-          const locked = crewMemberLocked(draft.crew, member);
-          return (
-            <View key={member.id} style={styles.crewRow}>
-              <View style={[styles.avatar, { backgroundColor: member.color }]}>
-                <Text style={styles.avatarText}>{member.initial}</Text>
+        <Locked locked={!owner}>
+          {draft.crew.map((member) => {
+            const locked = crewMemberLocked(draft.crew, member);
+            return (
+              <View key={member.id} style={styles.crewRow}>
+                <View style={[styles.avatar, { backgroundColor: member.color }]}>
+                  <Text style={styles.avatarText}>{member.initial}</Text>
+                </View>
+                <View style={styles.crewCopy}>
+                  <Text style={styles.name} numberOfLines={1}>
+                    {member.name}
+                  </Text>
+                  {!isGuest(member) ? <Text style={styles.role}>Joined with the code</Text> : null}
+                </View>
+                <TouchableOpacity
+                  style={styles.remove}
+                  onPress={() => removeCrew(member.id)}
+                  disabled={locked}
+                  activeOpacity={0.7}
+                  accessibilityLabel={locked ? `${member.name} stays on the trip` : `Remove ${member.name}`}
+                >
+                  <Ionicons name="close" size={18} color={locked ? C.line : C.muted} />
+                </TouchableOpacity>
               </View>
-              <View style={styles.crewCopy}>
-                <Text style={styles.name} numberOfLines={1}>
-                  {member.name}
-                </Text>
-                {!isGuest(member) ? <Text style={styles.role}>Joined with the code</Text> : null}
-              </View>
-              <TouchableOpacity
-                style={styles.remove}
-                onPress={() => removeCrew(member.id)}
-                disabled={locked}
-                activeOpacity={0.7}
-                accessibilityLabel={locked ? `${member.name} stays on the trip` : `Remove ${member.name}`}
-              >
-                <Ionicons name="close" size={18} color={locked ? C.line : C.muted} />
-              </TouchableOpacity>
-            </View>
-          );
-        })}
-        <View style={styles.addRow}>
-          <TextInput
-            style={styles.addInput}
-            placeholder="Add a name"
-            placeholderTextColor={C.faint}
-            value={crewName}
-            onChangeText={(value) => {
-              setCrewName(value);
-              setCrewNote(null);
-            }}
-            onSubmitEditing={addCrew}
-            returnKeyType="done"
-            autoCapitalize="words"
-            maxLength={40}
-          />
-          <TouchableOpacity
-            style={[styles.add, crewName.trim().length === 0 && styles.addOff]}
-            onPress={addCrew}
-            disabled={crewName.trim().length === 0}
-            activeOpacity={0.85}
-            accessibilityLabel="Add to crew"
-          >
-            <Ionicons name="add" size={22} color={C.white} />
-          </TouchableOpacity>
-        </View>
-        {crewNote ? <Text style={styles.hint}>{crewNote}</Text> : null}
+            );
+          })}
+          <View style={styles.addRow}>
+            <TextInput
+              style={styles.addInput}
+              placeholder="Add a name"
+              placeholderTextColor={C.faint}
+              value={crewName}
+              onChangeText={(value) => {
+                setCrewName(value);
+                setCrewNote(null);
+              }}
+              onSubmitEditing={addCrew}
+              returnKeyType="done"
+              autoCapitalize="words"
+              maxLength={40}
+            />
+            <TouchableOpacity
+              style={[styles.add, crewName.trim().length === 0 && styles.addOff]}
+              onPress={addCrew}
+              disabled={crewName.trim().length === 0}
+              activeOpacity={0.85}
+              accessibilityLabel="Add to crew"
+            >
+              <Ionicons name="add" size={22} color={C.white} />
+            </TouchableOpacity>
+          </View>
+          {crewNote ? <Text style={styles.hint}>{crewNote}</Text> : null}
+        </Locked>
 
         <Text style={layout.section}>Drivers</Text>
         <Text style={styles.sub}>
@@ -383,8 +393,10 @@ export function TripSettingsScreen({
         {draft.crew.map((member) => {
           const driver = draft.drivers.find((item) => item.crewId === member.id);
           const parts = driver ? splitLimit(driver.limitMinutes) : null;
+          // Everyone sets their own; the owner also sets it for people added by name, who have no account.
+          const editable = member.id === userId || (owner && isGuest(member));
           return (
-            <View key={member.id} style={styles.driverRow}>
+            <View key={member.id} style={[styles.driverRow, !editable && styles.locked]} pointerEvents={editable ? 'auto' : 'none'}>
               <TouchableOpacity
                 style={styles.who}
                 onPress={() => change({ drivers: toggleDriver(draft.drivers, member.id) })}
@@ -461,7 +473,20 @@ export function TripSettingsScreen({
   );
 }
 
+/** Greys out a part of the form that only the trip owner can change, and stops it taking taps. */
+function Locked({ locked, children }: { locked: boolean; children: ReactNode }) {
+  if (!locked) return <>{children}</>;
+  return (
+    <View pointerEvents="none" style={styles.locked} accessibilityState={{ disabled: true }}>
+      {children}
+    </View>
+  );
+}
+
 const styles = StyleSheet.create({
+  locked: {
+    opacity: 0.45,
+  },
   toggleRow: {
     marginTop: 16,
     flexDirection: 'row',

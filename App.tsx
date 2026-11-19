@@ -405,7 +405,8 @@ function CoDrive({ user, onSignOut }: { user: ApiUser; onSignOut: () => void }) 
   const saveSettings = async (settings: TripSettings) => {
     if (!trip) return;
     const accounts = new Set(trip.crew.filter((member) => !isGuest(member)).map((member) => member.id));
-    const saved = await saveTrip(trip.id, {
+    // Only the owner can change the trip's settings. Anyone else saves just their own driver setting.
+    const saved = trip.role !== 'owner' ? await saveTrip(trip.id, { drivers: settings.drivers }) : await saveTrip(trip.id, {
       title: settings.title,
       budget: settings.budget > 0 ? settings.budget : null,
       start_date: settings.startDate || null,
@@ -617,7 +618,7 @@ function CoDrive({ user, onSignOut }: { user: ApiUser; onSignOut: () => void }) 
                 <Text style={styles.emptyTabText}>Start a trip from Home to plan, drive, and split costs.</Text>
               </View>
             ) : null}
-            {tab === 'trip' && trip ? <TripSettingsScreen key={`${trip.id}-${settingsFocus ?? ''}`} trip={trip} onSave={saveSettings} focus={settingsFocus ?? undefined} /> : null}
+            {tab === 'trip' && trip ? <TripSettingsScreen key={`${trip.id}-${settingsFocus ?? ''}`} trip={trip} userId={user.id} onSave={saveSettings} focus={settingsFocus ?? undefined} /> : null}
             {tab === 'plan' && trip ? (
               <PlanScreen
                 trip={trip}

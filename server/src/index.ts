@@ -355,16 +355,12 @@ app.patch('/api/trips/:id', wrap(async (req, res) => {
     if (image === undefined) return fail('image must be an https URL or an image under 3 MB');
     set('image', image);
   }
-  if (body.drivers !== undefined) {
-    const drivers = driverList(body.drivers);
-    if (!drivers) return fail('drivers must list crew ids with limits from 60 to 720 minutes');
-    set('drivers', JSON.stringify(drivers));
-  }
-  if (body.guests !== undefined) {
-    const guests = guestList(body.guests);
-    if (!guests) return fail(`guests must list up to ${MAX_CREW} names`);
-    set('guests', JSON.stringify(guests));
-  }
+  // Drivers are merged in below, once we know who is asking: everyone sets their own.
+  const drivers = body.drivers === undefined ? undefined : driverList(body.drivers);
+  if (drivers === null) return fail('drivers must list crew ids with limits from 60 to 720 minutes');
+  const guests = body.guests === undefined ? undefined : guestList(body.guests);
+  if (guests === null) return fail(`guests must list up to ${MAX_CREW} names`);
+  if (guests) set('guests', JSON.stringify(guests));
   const endpoints: { role: 'start' | 'end'; stop: Place | null }[] = [];
   for (const role of ['start', 'end'] as const) {
     if (body[role] === undefined) continue;
@@ -385,13 +381,18 @@ app.patch('/api/trips/:id', wrap(async (req, res) => {
       res.status(404).json({ error: 'Trip not found' });
       return;
     }
-    if (endpoints.length > 0 && member.rows[0].role !== 'owner') {
+    const owner = member.rows[0].role === 'owner';
+    // Everything but the drivers belongs to the owner. Anyone else may only send their own driver setting.
+    if (!owner && Object.keys(body).some((key) => key !== 'drivers' && body[key] !== undefined)) {
       await client.query('ROLLBACK');
-      res.status(403).json({ error: 'Only the trip owner can change the start and end' });
+      res.status(403).json({ error: 'Only the trip owner can change the trip settings' });
       return;
     }
-    // Locks the trip so two saves cannot both add a Start or pick the same stop order.
-    await client.query('SELECT id FROM trips WHERE id = $1 FOR UPDATE', [tripId]);
+    // Locks the trip so two saves cannot both add a Start, pick the same stop order, or overwrite each other's drivers.
+    const current = await client.query('SELECT drivers, guests FROM trips WHERE id = $1 FOR UPDATE', [tripId]);
+    if (drivers) {
+      set('drivers', JSON.stringify(mergeDrivers(current.rows[0], drivers, guests, user.id, owner)));
+    }
     if (sets.length > 0) {
       await client.query(`UPDATE trips SET ${sets.join(', ')} WHERE id = $1`, [tripId, ...values]);
     }
@@ -953,6 +954,22 @@ type Driver = { crewId: string; limitMinutes: number };
 type Guest = { id: string; name: string };
 
 const MAX_CREW = 30;
+
+/**
+ * Each person sets only their own driver setting. The owner also sets it for people added by name, who have no
+ * account to do it themselves. Everyone else's entries stay as they were, whatever was sent.
+ */
+function mergeDrivers(
+  current: { drivers: Driver[] | null; guests: { id: string }[] | null },
+  sent: Driver[],
+  sentGuests: { id: string }[] | undefined,
+  userId: string,
+  owner: boolean,
+): Driver[] {
+  const guestIds = new Set([...(current.guests ?? []), ...(sentGuests ?? [])].map((guest) => guest.id));
+  const mine = (crewId: string) => crewId === userId || (owner && guestIds.has(crewId));
+  return [...(current.drivers ?? []).filter((driver) => !mine(driver.crewId)), ...sent.filter((driver) => mine(driver.crewId))];
+}
 
 function driverList(value: unknown): Driver[] | null {
   if (!Array.isArray(value) || value.length > MAX_CREW) return null;
