@@ -16,6 +16,7 @@ export function PlanScreen({
   onAdd,
   onPickPlace,
   onVote,
+  onRemove,
   onInvite,
 }: {
   trip: Trip;
@@ -24,6 +25,8 @@ export function PlanScreen({
   onAdd: () => void;
   onPickPlace: (place: AddressSuggestion) => void;
   onVote: (id: string, direction: 'up' | 'down') => void;
+  /** Asks to remove a stop. The Start and End have no remove button. */
+  onRemove: (id: string) => void;
   onInvite: () => void;
 }) {
   return (
@@ -35,6 +38,18 @@ export function PlanScreen({
           <View key={stop.id} style={styles.card}>
             <Image source={{ uri: stop.image }} style={styles.photo} />
             <StatusBadge status={stop.status} />
+            {stop.role ? null : (
+              <TouchableOpacity
+                style={styles.remove}
+                onPress={() => onRemove(stop.id)}
+                activeOpacity={0.8}
+                hitSlop={10}
+                accessibilityRole="button"
+                accessibilityLabel={`Remove ${stop.title}`}
+              >
+                <Ionicons name="close" size={18} color="#FFFFFF" />
+              </TouchableOpacity>
+            )}
             <View style={styles.body}>
               <Text style={styles.title}>{stop.title}</Text>
               <Text style={styles.meta}>
@@ -84,6 +99,17 @@ const styles = StyleSheet.create({
   photo: {
     width: '100%',
     height: 168,
+  },
+  remove: {
+    position: 'absolute',
+    top: 8,
+    left: 8,
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(28, 25, 23, 0.6)',
   },
   body: {
     paddingHorizontal: 14,

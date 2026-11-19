@@ -454,6 +454,32 @@ app.put('/api/trips/:id/waypoints/:waypointId/vote', wrap(async (req, res) => {
   res.json(saved);
 }));
 
+/** Removes a suggested stop, and its votes, for everyone on the trip. The Start and End are set on the Trip tab. */
+app.delete('/api/trips/:id/waypoints/:waypointId', wrap(async (req, res) => {
+  const user = currentUser(res);
+  const { id: tripId, waypointId } = req.params;
+  if (!isUuid(tripId) || !isUuid(waypointId)) {
+    res.status(400).json({ error: 'trip and stop ids must be uuids' });
+    return;
+  }
+  const found = await pool.query(
+    `SELECT w.role FROM waypoints w
+     JOIN trip_members m ON m.trip_id = w.trip_id AND m.user_id = $3
+     WHERE w.id = $2 AND w.trip_id = $1`,
+    [tripId, waypointId, user.id],
+  );
+  if (found.rowCount === 0) {
+    res.status(404).json({ error: 'Stop not found' });
+    return;
+  }
+  if (found.rows[0].role) {
+    res.status(400).json({ error: 'Change the Start and End on the Trip tab' });
+    return;
+  }
+  await pool.query('DELETE FROM waypoints WHERE id = $1 AND trip_id = $2', [waypointId, tripId]);
+  res.sendStatus(204);
+}));
+
 app.post('/api/trips/:id/expenses', wrap(async (req, res) => {
   const tripId = req.params.id;
   if (!isUuid(tripId)) {

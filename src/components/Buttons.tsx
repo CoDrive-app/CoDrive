@@ -9,6 +9,7 @@ export function PrimaryButton({
   compact,
   disabled,
   loading,
+  danger,
 }: {
   label: string;
   onPress: () => void;
@@ -16,10 +17,12 @@ export function PrimaryButton({
   compact?: boolean;
   disabled?: boolean;
   loading?: boolean;
+  /** For actions that can't be undone, like removing something. */
+  danger?: boolean;
 }) {
   return (
     <TouchableOpacity
-      style={[styles.primary, compact && styles.compact, disabled && styles.disabled]}
+      style={[styles.primary, danger && styles.danger, compact && styles.compact, disabled && styles.disabled]}
       onPress={onPress}
       disabled={disabled || loading}
       activeOpacity={0.86}
@@ -63,6 +66,9 @@ const styles = StyleSheet.create({
     color: C.white,
     fontSize: 16,
     fontWeight: '700',
+  },
+  danger: {
+    backgroundColor: '#C8473A',
   },
   quiet: {
     paddingVertical: 12,

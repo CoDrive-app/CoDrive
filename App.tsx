@@ -13,6 +13,7 @@ import {
   logExpense,
   onSessionEnded,
   removeTrip,
+  removeWaypoint,
   setAuthToken,
   signOut,
   updateTrip as saveTrip,
@@ -45,6 +46,7 @@ import { LogExpenseDialog } from './src/screens/LogExpenseDialog';
 import { PlanScreen } from './src/screens/PlanScreen';
 import { ProfileDialog } from './src/screens/ProfileDialog';
 import { RotationDialog } from './src/screens/RotationDialog';
+import { RemoveStopDialog } from './src/screens/RemoveStopDialog';
 import { StopNoteDialog } from './src/screens/StopNoteDialog';
 import { TripSettingsScreen, type TripSettings } from './src/screens/TripSettingsScreen';
 import { clearToken, loadToken, saveToken } from './src/session';
@@ -177,6 +179,10 @@ function CoDrive({ user, onSignOut }: { user: ApiUser; onSignOut: () => void }) 
   const [stopNote, setStopNote] = useState('');
   const [addingStop, setAddingStop] = useState(false);
   const [stopError, setStopError] = useState<string | null>(null);
+  // The stop waiting for "Are you sure?" before it is removed.
+  const [removeId, setRemoveId] = useState<string | null>(null);
+  const [removing, setRemoving] = useState(false);
+  const [removeError, setRemoveError] = useState<string | null>(null);
   const [tripName, setTripName] = useState('');
   const [draftPlace, setDraftPlace] = useState<Spot | null>(null);
   const [expenseType, setExpenseType] = useState<ExpenseType | null>(null);
@@ -234,6 +240,10 @@ function CoDrive({ user, onSignOut }: { user: ApiUser; onSignOut: () => void }) 
 
   useEffect(() => {
     const sub = BackHandler.addEventListener('hardwareBackPress', () => {
+      if (removeId) {
+        setRemoveId(null);
+        return true;
+      }
       if (noteOpen) {
         setNoteOpen(false);
         return true;
@@ -273,7 +283,7 @@ function CoDrive({ user, onSignOut }: { user: ApiUser; onSignOut: () => void }) 
       return false;
     });
     return () => sub.remove();
-  }, [noteOpen, inviteOpen, rotationOpen, connectionOpen, createOpen, joinOpen, expenseOpen, profileOpen, tab]);
+  }, [removeId, noteOpen, inviteOpen, rotationOpen, connectionOpen, createOpen, joinOpen, expenseOpen, profileOpen, tab]);
 
   const updateTrip = (id: string, recipe: (current: Trip) => Trip) => {
     setTrips((current) => current.map((item) => (item.id === id ? recipe(item) : item)));
@@ -457,6 +467,30 @@ function CoDrive({ user, onSignOut }: { user: ApiUser; onSignOut: () => void }) 
       .catch(() => replace(before));
   };
 
+  const askRemove = (id: string) => {
+    setRemoveError(null);
+    setRemoveId(id);
+  };
+
+  /** Removes the stop on the server first, so it only leaves the list once it is really gone. */
+  const confirmRemove = async () => {
+    if (!trip || !removeId || removing) return;
+    const tripId = trip.id;
+    const id = removeId;
+    setRemoving(true);
+    setRemoveError(null);
+    try {
+      await removeWaypoint(tripId, id);
+    } catch (error) {
+      setRemoveError(error instanceof Error ? error.message : 'Could not remove the stop');
+      return;
+    } finally {
+      setRemoving(false);
+    }
+    updateTrip(tripId, (current) => ({ ...current, waypoints: current.waypoints.filter((stop) => stop.id !== id) }));
+    setRemoveId(null);
+  };
+
   const handleLog = async () => {
     if (!expenseReady || !trip || logging) return;
     if (expenseType === null) return;
@@ -553,6 +587,7 @@ function CoDrive({ user, onSignOut }: { user: ApiUser; onSignOut: () => void }) 
                 onAdd={requestStop}
                 onPickPlace={pickPlace}
                 onVote={vote}
+                onRemove={askRemove}
                 onInvite={() => setInviteOpen(true)}
               />
             ) : null}
@@ -664,6 +699,16 @@ function CoDrive({ user, onSignOut }: { user: ApiUser; onSignOut: () => void }) 
             onClear={() => setProfileUri(null)}
             onSignOut={onSignOut}
             onClose={() => setProfileOpen(false)}
+          />
+        ) : null}
+
+        {removeId && trip ? (
+          <RemoveStopDialog
+            stopTitle={trip.waypoints.find((stop) => stop.id === removeId)?.title ?? 'This stop'}
+            onConfirm={confirmRemove}
+            onClose={() => setRemoveId(null)}
+            submitting={removing}
+            error={removeError}
           />
         ) : null}
 

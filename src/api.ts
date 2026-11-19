@@ -214,6 +214,11 @@ export function joinTrip(shareCode: string) {
   });
 }
 
+/** Removes a stop and its votes for everyone on the trip. The Start and End can't be removed this way. */
+export function removeWaypoint(tripId: string, waypointId: string) {
+  return request<void>(`/api/trips/${tripId}/waypoints/${waypointId}`, { method: 'DELETE' });
+}
+
 /** Deletes the trip if you own it, or takes you off it if you joined it. */
 export function removeTrip(id: string) {
   return request<void>(`/api/trips/${id}`, { method: 'DELETE' });
