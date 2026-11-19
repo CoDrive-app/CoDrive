@@ -118,9 +118,10 @@ export function StopSearch({
     run(() => nearbyPlaces(next, anchor), 0);
   };
 
+  // Picking clears the results but leaves the panel to follow the box's real focus: while the keyboard stays open,
+  // the box is still focused, so the category chips stay too.
   const pick = (place: AddressSuggestion) => {
     reset();
-    setFocused(false);
     onPick(place);
   };
 
