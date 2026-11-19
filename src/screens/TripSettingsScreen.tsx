@@ -435,7 +435,8 @@ export function TripSettingsScreen({
                     label={`${member.name} driving minutes`}
                     unit="min"
                     pad
-                    count={parts.hours === 12 ? 1 : 60}
+                    step={5}
+                    count={parts.hours === 12 ? 1 : 12}
                     value={parts.minutes}
                     onChange={(minutes) =>
                       change({ drivers: setLimit(draft.drivers, member.id, joinLimit(parts.hours, minutes)) })
