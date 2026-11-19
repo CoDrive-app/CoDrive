@@ -195,6 +195,14 @@ export function updateTrip(id: string, patch: TripPatch) {
   });
 }
 
+/** Makes a stop the fixed Start or End, or null to stop it being one. Only the trip owner can. */
+export function setStopRole(tripId: string, waypointId: string, role: 'start' | 'end' | null) {
+  return request<ApiTripDetail>(`/api/trips/${tripId}/waypoints/${waypointId}/role`, {
+    method: 'PUT',
+    body: JSON.stringify({ role }),
+  });
+}
+
 export function voteWaypoint(tripId: string, waypointId: string, vote: 'up' | 'down' | null) {
   return request<ApiWaypoint>(`/api/trips/${tripId}/waypoints/${waypointId}/vote`, {
     method: 'PUT',

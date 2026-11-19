@@ -25,6 +25,9 @@ export function PlanScreen({
   onVote,
   onRemove,
   userId,
+  onSetRole,
+  roleBusy,
+  notice,
   onInvite,
 }: {
   trip: Trip;
@@ -37,6 +40,12 @@ export function PlanScreen({
   onRemove: (id: string) => void;
   /** The signed-in account. You can remove your own suggestions; the owner can remove any stop. */
   userId: string;
+  /** Makes a stop the fixed Start or End, or turns that off. Only the owner sees these buttons. */
+  onSetRole: (id: string, role: 'start' | 'end') => void;
+  /** True while a start or end change is saving. */
+  roleBusy: boolean;
+  /** A message to show above the stops, like a failed save. */
+  notice: string | null;
   onInvite: () => void;
 }) {
   const owner = trip.role === 'owner';
@@ -47,6 +56,7 @@ export function PlanScreen({
       <ScrollView style={layout.fill} contentContainerStyle={layout.scroll} showsVerticalScrollIndicator={false}>
         <TripHeader trip={trip} onInvite={onInvite} />
         <Text style={layout.section}>Proposed stops</Text>
+        {notice ? <Text style={styles.notice}>{notice}</Text> : null}
         {trip.waypoints.map((stop) => (
           <View key={stop.id} style={styles.card}>
             <Image source={{ uri: stop.image }} style={styles.photo} />
@@ -56,6 +66,29 @@ export function PlanScreen({
               <Text style={styles.meta}>
                 {stop.note || stop.detail} · Proposed by {stop.proposedBy}
               </Text>
+              {owner && typeof stop.latitude === 'number' ? (
+                <View style={styles.roleRow}>
+                  {(['start', 'end'] as const).map((role) => {
+                    const on = stop.role === role;
+                    const name = role === 'start' ? 'start' : 'end';
+                    return (
+                      <TouchableOpacity
+                        key={role}
+                        style={[styles.roleChip, on && styles.roleChipOn]}
+                        onPress={() => onSetRole(stop.id, role)}
+                        disabled={roleBusy}
+                        activeOpacity={0.7}
+                        accessibilityRole="button"
+                        accessibilityState={{ selected: on, disabled: roleBusy }}
+                        accessibilityLabel={on ? `${stop.title} is the fixed ${name}. Tap to unfix it.` : `Make ${stop.title} the ${name}`}
+                      >
+                        <Ionicons name={on ? 'flag' : 'flag-outline'} size={13} color={on ? C.white : C.muted} />
+                        <Text style={[styles.roleText, on && styles.roleTextOn]}>{on ? (role === 'start' ? 'Start' : 'End') : `Make ${name}`}</Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+              ) : null}
               <View style={styles.voteRow}>
                 <VoteButton
                   kind="up"
@@ -112,6 +145,38 @@ const styles = StyleSheet.create({
   photo: {
     width: '100%',
     height: 168,
+  },
+  notice: {
+    marginBottom: 10,
+    fontSize: 13,
+    color: C.ink,
+  },
+  roleRow: {
+    marginTop: 10,
+    flexDirection: 'row',
+    gap: 8,
+  },
+  roleChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: C.line,
+  },
+  roleChipOn: {
+    backgroundColor: C.teal,
+    borderColor: C.teal,
+  },
+  roleText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: C.muted,
+  },
+  roleTextOn: {
+    color: C.white,
   },
   remove: {
     marginLeft: 'auto',
