@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Dimensions, Image, ScrollView, StyleSheet, Switch, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
@@ -132,6 +132,14 @@ export function TripSettingsScreen({
   };
   const initial = useMemo(() => draftFrom(trip), [trip]);
   const [draft, setDraft] = useState<Draft>(initial);
+  // When someone else saves the trip, show their changes, unless this form already has edits that aren't saved.
+  const shown = useRef(initial);
+  useEffect(() => {
+    if (shown.current === initial) return;
+    const before = shown.current;
+    shown.current = initial;
+    setDraft((current) => (snapshot(current) === snapshot(before) ? initial : current));
+  }, [initial]);
   const [photoNote, setPhotoNote] = useState<string | null>(null);
   const [crewName, setCrewName] = useState('');
   const [crewNote, setCrewNote] = useState<string | null>(null);

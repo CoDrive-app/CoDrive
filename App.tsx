@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useState } from 'react';
-import { ActivityIndicator, BackHandler, Platform, StyleSheet, Text, View } from 'react-native';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { ActivityIndicator, AppState, BackHandler, Platform, StyleSheet, Text, View } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
@@ -7,6 +7,7 @@ import {
   createTrip,
   currentUser,
   getTrip,
+  getTripRevision,
   isServerTrip,
   joinTrip,
   listTrips,
@@ -157,6 +158,7 @@ function tripFromApi(row: ApiTrip | ApiTripDetail): Trip {
     expenses: 'expenses' in row ? row.expenses.map(expenseFromApi) : [],
     budget: Number(row.budget) > 0 ? Number(row.budget) : 0,
     drivers: row.drivers,
+    revision: row.revision,
     duration: '—',
     leg: start && end ? `${start} to ${end}` : 'Select at least two stops on the Plan tab',
     rest: { place: 'Nearest safe pull-off', distance: '—', note: 'We’ll mark it once you’re moving' },
@@ -176,6 +178,9 @@ function endpointChange(trip: Trip, role: 'start' | 'end', next: ApiPlace | null
     : next === null;
   return same ? {} : { [role]: next };
 }
+
+/** How often an open trip checks for changes from the rest of the crew. */
+const LIVE_CHECK_MS = 4000;
 
 function CoDrive({ user, onSignOut }: { user: ApiUser; onSignOut: () => void }) {
   const insets = useSafeAreaInsets();
@@ -245,6 +250,45 @@ function CoDrive({ user, onSignOut }: { user: ApiUser; onSignOut: () => void }) 
       active = false;
     };
   }, []);
+
+  // Every few seconds while a trip is open, check whether anyone on it changed something, and reload it if so.
+  // Trip, Plan, Drive and Split all show this one copy of the trip, so they all update together.
+  const latestTrip = useRef(trip);
+  latestTrip.current = trip;
+  // Votes show straight away, before the server answers, so a reload is held back until they're saved.
+  const votesSaving = useRef(0);
+  const liveTripId = trip?.id;
+  useEffect(() => {
+    if (!liveTripId || !isServerTrip(liveTripId)) return;
+    let active = true;
+    let checking = false;
+    const check = async () => {
+      if (checking || AppState.currentState !== 'active') return;
+      checking = true;
+      try {
+        const { revision } = await getTripRevision(liveTripId);
+        const known = latestTrip.current?.id === liveTripId ? latestTrip.current.revision : undefined;
+        if (!active || revision === known || votesSaving.current > 0) return;
+        const saved = await getTrip(liveTripId);
+        if (!active || votesSaving.current > 0) return;
+        setTrips((current) => current.map((item) => (item.id === liveTripId ? tripFromApi(saved) : item)));
+      } catch {
+        // Offline or the server is busy: try again on the next check.
+      } finally {
+        checking = false;
+      }
+    };
+    const timer = setInterval(() => void check(), LIVE_CHECK_MS);
+    // Coming back to the app checks straight away instead of waiting for the next tick.
+    const sub = AppState.addEventListener('change', (state) => {
+      if (state === 'active') void check();
+    });
+    return () => {
+      active = false;
+      clearInterval(timer);
+      sub.remove();
+    };
+  }, [liveTripId]);
 
   // The trip list has no stops or expenses, so load the open trip in full, and again on each tab
   // so changes from the rest of the crew show up.
@@ -487,9 +531,13 @@ function CoDrive({ user, onSignOut }: { user: ApiUser; onSignOut: () => void }) 
         waypoints: current.waypoints.map((stop) => (stop.id === id ? next : stop)),
       }));
     replace(before.role ? { ...after, status: 'selected' } : after);
+    votesSaving.current += 1;
     voteWaypoint(tripId, id, after.vote)
       .then((saved) => replace(stopFromApi(saved, groupSize)))
-      .catch(() => replace(before));
+      .catch(() => replace(before))
+      .finally(() => {
+        votesSaving.current -= 1;
+      });
   };
 
   const removeStop = removeId ? trip?.waypoints.find((stop) => stop.id === removeId) : undefined;
