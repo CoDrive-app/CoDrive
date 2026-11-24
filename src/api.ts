@@ -46,6 +46,8 @@ export type ApiTrip = {
   drivers: { crewId: string; limitMinutes: number }[];
   /** Crew members without an account. */
   guests: { id: string; name: string }[];
+  /** Goes up by one with every change anyone makes to the trip. */
+  revision: number;
 };
 
 export type ApiTripDetail = ApiTrip & { waypoints: ApiWaypoint[]; expenses: ApiExpense[] };
@@ -190,6 +192,11 @@ export function listTrips() {
 
 export function getTrip(id: string) {
   return request<ApiTripDetail>(`/api/trips/${id}`);
+}
+
+/** A cheap check for whether anyone changed the trip: its change count. */
+export function getTripRevision(id: string) {
+  return request<{ revision: number }>(`/api/trips/${id}/revision`);
 }
 
 export function updateTrip(id: string, patch: TripPatch) {

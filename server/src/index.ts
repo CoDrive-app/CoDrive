@@ -194,6 +194,7 @@ app.post('/api/trips/join', wrap(async (req, res) => {
      ON CONFLICT (trip_id, user_id) DO NOTHING`,
     [tripId, user.id],
   );
+  await touchTrip(tripId);
   res.json(await findTrip(tripId, user.id));
 }));
 
@@ -215,6 +216,7 @@ app.delete('/api/trips/:id', wrap(async (req, res) => {
   } else {
     await pool.query('DELETE FROM trip_members WHERE trip_id = $1 AND user_id = $2', [tripId, user.id]);
   }
+  await touchTrip(tripId);
   res.sendStatus(204);
 }));
 
@@ -284,6 +286,7 @@ app.post('/api/trips/:id/waypoints', wrap(async (req, res) => {
     );
     await client.query('COMMIT');
     const [saved] = await findWaypoints(pool, tripId, user.id, inserted.rows[0].id);
+    await touchTrip(tripId);
     res.status(201).json(saved);
   } catch (error) {
     await client.query('ROLLBACK');
@@ -316,6 +319,26 @@ app.get('/api/trips/:id', wrap(async (req, res) => {
     return;
   }
   res.json(trip);
+}));
+
+/** How many changes the trip has had, so the app can tell cheaply whether to reload it. Members only. */
+app.get('/api/trips/:id/revision', wrap(async (req, res) => {
+  const tripId = req.params.id;
+  if (!isUuid(tripId)) {
+    res.status(400).json({ error: 'trip id must be a uuid' });
+    return;
+  }
+  const result = await pool.query(
+    `SELECT t.revision FROM trips t
+     JOIN trip_members m ON m.trip_id = t.id AND m.user_id = $2
+     WHERE t.id = $1`,
+    [tripId, currentUser(res).id],
+  );
+  if (result.rowCount === 0) {
+    res.status(404).json({ error: 'Trip not found' });
+    return;
+  }
+  res.json({ revision: Number(result.rows[0].revision) });
 }));
 
 /**
@@ -429,6 +452,7 @@ app.patch('/api/trips/:id', wrap(async (req, res) => {
   } finally {
     client.release();
   }
+  await touchTrip(tripId);
   res.json(await tripDetail(tripId, user.id));
 }));
 
@@ -486,6 +510,7 @@ app.put('/api/trips/:id/waypoints/:waypointId/role', wrap(async (req, res) => {
   } finally {
     client.release();
   }
+  await touchTrip(tripId);
   res.json(await tripDetail(tripId, user.id));
 }));
 
@@ -522,6 +547,7 @@ app.put('/api/trips/:id/waypoints/:waypointId/vote', wrap(async (req, res) => {
     );
   }
   const [saved] = await findWaypoints(pool, tripId, user.id, waypointId);
+  await touchTrip(tripId);
   res.json(saved);
 }));
 
@@ -557,6 +583,7 @@ app.delete('/api/trips/:id/waypoints/:waypointId', wrap(async (req, res) => {
     return;
   }
   await pool.query('DELETE FROM waypoints WHERE id = $1 AND trip_id = $2', [waypointId, tripId]);
+  await touchTrip(tripId);
   res.sendStatus(204);
 }));
 
@@ -610,6 +637,7 @@ app.post('/api/trips/:id/expenses', wrap(async (req, res) => {
      RETURNING id, trip_id, paid_by_user, amount, category, title, description, photos`,
     [tripId, paidByUser, amount, category, title, description, photos, user.id],
   );
+  await touchTrip(tripId);
   res.status(201).json(expenseRow(inserted.rows[0]));
 }));
 
@@ -839,7 +867,7 @@ function emailText(value: unknown): string | null {
 const TRIP_SELECT = `
   SELECT t.id, t.title, t.share_code, t.budget, t.created_at, me.role,
     to_char(t.start_date, 'YYYY-MM-DD') AS start_date, to_char(t.end_date, 'YYYY-MM-DD') AS end_date,
-    t.image, t.drivers, t.guests,
+    t.image, t.drivers, t.guests, t.revision,
     (SELECT json_agg(json_build_object('id', u.id, 'name', u.name, 'role', m.role) ORDER BY m.joined_at)
      FROM trip_members m JOIN users u ON u.id = m.user_id
      WHERE m.trip_id = t.id) AS members
@@ -871,6 +899,7 @@ function tripRow(row: {
   image: string | null;
   drivers: Driver[] | null;
   guests: Guest[] | null;
+  revision: number | string;
 }) {
   return {
     id: row.id,
@@ -885,7 +914,16 @@ function tripRow(row: {
     image: row.image,
     drivers: row.drivers ?? [],
     guests: row.guests ?? [],
+    revision: Number(row.revision),
   };
+}
+
+/**
+ * Counts one more change to a trip. The app checks this number every few seconds while a trip is open,
+ * and reloads the trip only when it has gone up, so everyone sees each other's changes.
+ */
+async function touchTrip(tripId: string) {
+  await pool.query('UPDATE trips SET revision = revision + 1 WHERE id = $1', [tripId]);
 }
 
 /** A trip with its stops and expenses, as the user in `userId` sees it. */

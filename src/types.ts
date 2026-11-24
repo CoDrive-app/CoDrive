@@ -88,4 +88,6 @@ export interface Trip {
   duration: string;
   leg: string;
   rest: RestStop;
+  /** The server's change count when this copy was loaded. A higher count there means someone changed the trip. */
+  revision?: number;
 }
